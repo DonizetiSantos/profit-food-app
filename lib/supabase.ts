@@ -1,4 +1,9 @@
+import { createClient } from "@supabase/supabase-js";
 
-// Este arquivo foi neutralizado para evitar o erro de inicialização.
-// A persistência foi movida para o localStorage em App.tsx para garantir funcionalidade offline/imediata.
-export const supabase = null;
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+export const supabase = createClient(
+  supabaseUrl,
+  supabaseAnonKey
+);
