@@ -37,7 +37,7 @@ export const getFinancialAdvice = async (transactions: Transaction[], categories
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
+      model: 'gemini-2.0-flash-001',
       contents: prompt,
       config: {
         systemInstruction: "Você é o Assistente de Diagnóstico Financeiro ProfitFood. Sua linguagem deve ser consultiva, provocativa e clara. Foque em eficiência operacional e gestão de margens.",
@@ -83,7 +83,7 @@ export const getDetailedFinancialAnalysis = async (dreData: any, dashboardStats:
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
+      model: 'gemini-2.0-flash-001',
       contents: prompt,
       config: {
         systemInstruction: "Retorne APENAS um JSON válido. Use os benchmarks ProfitFood rigorosamente para definir os status 'success', 'warning' ou 'danger'. Seja técnico e imparcial.",
