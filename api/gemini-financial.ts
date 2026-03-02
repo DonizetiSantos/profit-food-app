@@ -1,6 +1,28 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { GoogleGenAI, Type } from "@google/genai";
 
+type Status = "success" | "warning" | "danger";
+
+function normalizeStatus(input: any): Status {
+  const v = String(input || "").toLowerCase().trim();
+
+  // já está ok
+  if (v === "success" || v === "warning" || v === "danger") return v;
+
+  // mapeamentos comuns PT-BR
+  if (v.includes("ideal") || v.includes("seguro") || v.includes("ok") || v.includes("bom")) return "success";
+  if (v.includes("aten") || v.includes("alert") || v.includes("moder")) return "warning";
+  if (v.includes("crít") || v.includes("crit") || v.includes("perig") || v.includes("ruim")) return "danger";
+
+  // fallback padrão
+  return "warning";
+}
+
+function ensureArrayOfStrings(x: any): string[] {
+  if (Array.isArray(x)) return x.map((i) => String(i));
+  return [];
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed. Use POST." });
@@ -27,13 +49,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       model,
       contents: prompt,
       config: {
-        systemInstruction:
-          "Você é o Assistente de Diagnóstico Financeiro ProfitFood. Retorne APENAS um JSON válido. Use os benchmarks ProfitFood.",
+        systemInstruction: `
+Você é o Assistente de Diagnóstico Financeiro ProfitFood.
+
+REGRAS OBRIGATÓRIAS DE RETORNO:
+- Retorne APENAS um JSON válido (sem markdown, sem texto extra).
+- O campo "status" em cada KPI DEVE ser apenas: "success" ou "warning" ou "danger".
+- O campo "safetyMarginStatus" DEVE ser apenas: "success" ou "warning" ou "danger".
+- NÃO use palavras como "Ideal", "Atenção", "Crítico", "Seguro". Converta para:
+  - Ideal / Seguro => "success"
+  - Atenção => "warning"
+  - Crítico => "danger"
+- Inclua SEMPRE: summary, kpis, stability, criticalAlerts, recommendations, healthScore.
+- healthScore: número de 0 a 100.
+- Use os benchmarks ProfitFood rigorosamente.
+        `.trim(),
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
             summary: { type: Type.STRING },
+
             kpis: {
               type: Type.ARRAY,
               items: {
@@ -41,24 +77,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 properties: {
                   label: { type: Type.STRING },
                   value: { type: Type.STRING },
-                  status: { type: Type.STRING },
+                  status: { type: Type.STRING, enum: ["success", "warning", "danger"] },
                   benchmark: { type: Type.STRING },
                   description: { type: Type.STRING },
                 },
                 required: ["label", "value", "status", "benchmark", "description"],
               },
             },
+
             stability: {
               type: Type.OBJECT,
               properties: {
                 breakEven: { type: Type.STRING },
                 safetyMargin: { type: Type.STRING },
-                safetyMarginStatus: { type: Type.STRING },
+                safetyMarginStatus: { type: Type.STRING, enum: ["success", "warning", "danger"] },
               },
               required: ["breakEven", "safetyMargin", "safetyMarginStatus"],
             },
+
+            criticalAlerts: { type: Type.ARRAY, items: { type: Type.STRING } },
+            recommendations: { type: Type.ARRAY, items: { type: Type.STRING } },
+            healthScore: { type: Type.NUMBER },
           },
-          required: ["summary", "kpis", "stability"],
+          required: ["summary", "kpis", "stability", "criticalAlerts", "recommendations", "healthScore"],
         },
       },
     });
@@ -71,6 +112,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } catch {
       return res.status(502).json({ error: "Model did not return valid JSON.", raw: text });
     }
+
+    // ✅ Normalização defensiva (caso o modelo ainda devolva Ideal/Seguro etc.)
+    if (Array.isArray(data?.kpis)) {
+      data.kpis = data.kpis.map((k: any) => ({
+        ...k,
+        status: normalizeStatus(k?.status),
+      }));
+    } else {
+      data.kpis = [];
+    }
+
+    if (data?.stability) {
+      data.stability = {
+        ...data.stability,
+        safetyMarginStatus: normalizeStatus(data?.stability?.safetyMarginStatus),
+      };
+    } else {
+      data.stability = {
+        breakEven: "",
+        safetyMargin: "",
+        safetyMarginStatus: "warning" as Status,
+      };
+    }
+
+    data.criticalAlerts = ensureArrayOfStrings(data?.criticalAlerts);
+    data.recommendations = ensureArrayOfStrings(data?.recommendations);
+
+    if (typeof data?.healthScore !== "number" || Number.isNaN(data.healthScore)) {
+      data.healthScore = 0;
+    } else {
+      // clamp 0..100
+      data.healthScore = Math.max(0, Math.min(100, data.healthScore));
+    }
+
+    // Garantia mínima do summary
+    if (typeof data?.summary !== "string") data.summary = "";
 
     return res.status(200).json(data);
   } catch (err: any) {
