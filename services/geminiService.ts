@@ -83,7 +83,7 @@ export const getDetailedFinancialAnalysis = async (dreData: any, dashboardStats:
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
+      model: 'gemini-1.5-flash',
       contents: prompt,
       config: {
         systemInstruction: "Retorne APENAS um JSON válido. Use os benchmarks ProfitFood rigorosamente para definir os status 'success', 'warning' ou 'danger'. Seja técnico e imparcial.",
