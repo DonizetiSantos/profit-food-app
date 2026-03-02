@@ -13,7 +13,7 @@ import { FinancialAnalysis } from './components/FinancialAnalysis';
 import { FinancialAnalysisData } from './services/geminiService';
 import { datastore, AppState } from './data/datastore';
 import { Reconciliation } from './components/Reconciliation';
-import { supabase } from './src/lib/supabase';
+import { supabase } from './lib/supabase';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
