@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Bank } from '../types';
+import { Bank, User } from '../types';
 import { ofxImportService } from '../services/ofxImportService';
 import { supabase } from '../src/lib/supabase';
 
 interface Props {
   banks: Bank[];
   onRefresh?: () => void;
+  user: User | null;
 }
 
-export const Reconciliation: React.FC<Props> = ({ banks, onRefresh }) => {
+export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
   const [selectedBankId, setSelectedBankId] = useState<string>('');
   const [transactions, setTransactions] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -21,6 +22,16 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh }) => {
   const [selectedPostingId, setSelectedPostingId] = useState<string>('');
   const [reconciling, setReconciling] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Manual Selection State
+  const [isManualMode, setIsManualMode] = useState(false);
+  const [manualQuery, setManualQuery] = useState('');
+  const [manualStartDate, setManualStartDate] = useState('');
+  const [manualEndDate, setManualEndDate] = useState('');
+  const [manualMinAmount, setManualMinAmount] = useState('');
+  const [manualMaxAmount, setManualMaxAmount] = useState('');
+  const [manualCandidates, setManualCandidates] = useState<any[]>([]);
+  const [loadingManual, setLoadingManual] = useState(false);
 
   const loadTransactions = async () => {
     if (!selectedBankId) {
@@ -104,6 +115,15 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh }) => {
     setSelectedTransaction(transaction);
     setLoadingCandidates(true);
     setSelectedPostingId('');
+    setIsManualMode(false);
+    
+    // Clear manual filters by default as requested
+    setManualStartDate('');
+    setManualEndDate('');
+    setManualMinAmount('');
+    setManualMaxAmount('');
+    setManualQuery('');
+
     try {
       const results = await ofxImportService.getReconciliationCandidates(transaction);
       setCandidates(results);
@@ -116,8 +136,6 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh }) => {
         // Auto-liquidate if score >= 95 and has mapping
         if (bestMatch.match_score >= 95 && bestMatch.has_mapping) {
           console.log("Auto-matching detected for", transaction.id, "Score:", bestMatch.match_score);
-          // We'll show a small indicator or just let the user confirm with one click
-          // The prompt says "permitir auto-liquidação (sem modal)", so let's implement a quick path
           if (window.confirm(`Conciliação automática sugerida (Score: ${bestMatch.match_score}%). Confirmar vínculo com ${bestMatch.favored?.name}?`)) {
             await performReconciliation(transaction, bestMatch, 'AUTO');
             return;
@@ -132,50 +150,92 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh }) => {
     }
   };
 
+  const handleManualSearch = async () => {
+    setLoadingManual(true);
+    try {
+      const results = await ofxImportService.searchPostings({
+        query: manualQuery,
+        startDate: manualStartDate,
+        endDate: manualEndDate,
+        minAmount: manualMinAmount ? parseFloat(manualMinAmount) : undefined,
+        maxAmount: manualMaxAmount ? parseFloat(manualMaxAmount) : undefined
+      });
+      setManualCandidates(results);
+    } catch (err) {
+      console.error("Erro na busca manual:", err);
+      alert("Erro ao buscar lançamentos.");
+    } finally {
+      setLoadingManual(false);
+    }
+  };
+
   const performReconciliation = async (bankTx: any, posting: any, type: 'MANUAL' | 'AUTO' = 'MANUAL') => {
-    console.log(`Reconciling (${type})`, bankTx.id, "->", posting.id);
+    console.log(`[Reconciliation] Starting (${type})`, { bankTxId: bankTx.id, postingId: posting.id, amount: bankTx.amount });
     setReconciling(true);
 
     try {
-      // (A) Insert reconciliation
+      const actualAmount = Math.abs(bankTx.amount);
+
+      // (A) Insert reconciliation record
       const { error: recError } = await supabase
         .from('reconciliations')
         .insert({
           bank_transaction_id: bankTx.id,
           posting_id: posting.id,
           match_type: type,
-          match_score: posting.match_score || 1,
-          notes: bankTx.description
+          match_score: posting.match_score || 0,
+          notes: bankTx.description,
+          reconciled_by: user?.id || null,
+          matched_amount: actualAmount
         });
 
-      if (recError) throw recError;
-
-      // (B) Update posting if PROVISIONADO
-      if (posting.status === 'PROVISIONADO') {
-        const { error: updateError } = await supabase
-          .from('postings')
-          .update({
-            status: 'LIQUIDADO',
-            bank_id: bankTx.bank_id,
-            liquidation_date: bankTx.posted_date
-          })
-          .eq('id', posting.id);
-        
-        if (updateError) throw updateError;
+      if (recError) {
+        console.error("[Reconciliation] Error inserting reconciliation:", recError);
+        // Fallback if columns are missing in some environments
+        const { error: retryError } = await supabase
+          .from('reconciliations')
+          .insert({
+            bank_transaction_id: bankTx.id,
+            posting_id: posting.id,
+            match_type: type,
+            notes: `${bankTx.description} (Valor real: ${actualAmount})`
+          });
+        if (retryError) throw retryError;
       }
 
-      // (C) Save learned mapping
+      // (B) Update posting: Status, Bank, Liquidation Date AND Amount
+      // We update the amount to match the bank statement exactly as requested
+      const { error: updateError } = await supabase
+        .from('postings')
+        .update({
+          status: 'LIQUIDADO',
+          bank_id: bankTx.bank_id,
+          liquidation_date: bankTx.posted_date,
+          amount: actualAmount // Update to the real value paid/received
+        })
+        .eq('id', posting.id);
+      
+      if (updateError) {
+        console.error("[Reconciliation] Error updating posting:", updateError);
+        throw updateError;
+      }
+
+      // (C) Save learned mapping for future auto-reconciliations
       if (posting.favored?.id) {
         await ofxImportService.savePayeeMapping(bankTx.bank_id, bankTx.description, posting.favored.id);
       }
 
-      if (type === 'MANUAL') alert("Conciliação realizada com sucesso");
+      console.log("[Reconciliation] Success!");
+      if (type === 'MANUAL') alert("Conciliação realizada com sucesso! O valor do lançamento foi ajustado para o valor do extrato.");
       
       setSelectedTransaction(null);
+      setSelectedPostingId('');
+      setIsManualMode(false);
+      
       await loadTransactions();
       if (onRefresh) onRefresh();
     } catch (err: any) {
-      console.error("Erro ao conciliar:", err);
+      console.error("[Reconciliation] Critical error:", err);
       alert("Erro ao salvar conciliação: " + (err.message || "Erro desconhecido"));
     } finally {
       setReconciling(false);
@@ -184,7 +244,9 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh }) => {
 
   const handleConfirmReconciliation = async () => {
     const bankTx = selectedTransaction;
-    const posting = candidates.find(c => c.id === selectedPostingId);
+    const posting = isManualMode 
+      ? manualCandidates.find(c => c.id === selectedPostingId)
+      : candidates.find(c => c.id === selectedPostingId);
 
     if (!bankTx || !posting) {
       alert("Selecione uma transação e um lançamento para conciliar.");
@@ -337,120 +399,258 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh }) => {
       {/* Reconcile Modal */}
       {selectedTransaction && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in">
-          <div className="bg-slate-900 w-full max-w-2xl rounded-[2.5rem] border border-slate-800 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="p-8 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+          <div className="bg-slate-900 w-full max-w-4xl rounded-[2.5rem] border border-slate-800 shadow-2xl overflow-hidden flex flex-col max-h-[95vh]">
+            <div className="p-5 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
               <div>
-                <h3 className="text-2xl font-black text-white uppercase tracking-tight">Conciliar Transação</h3>
-                <p className="text-slate-500 text-xs font-medium mt-1">Vincule esta transação bancária a um lançamento do sistema.</p>
+                <h3 className="text-xl font-black text-white uppercase tracking-tight">Conciliar Transação</h3>
+                <p className="text-slate-500 text-[10px] font-medium mt-0.5">Vincule esta transação bancária a um lançamento do sistema.</p>
               </div>
               <button 
                 onClick={() => setSelectedTransaction(null)}
-                className="p-2 rounded-xl hover:bg-slate-800 text-slate-500 transition-all"
+                className="p-1.5 rounded-xl hover:bg-slate-800 text-slate-500 transition-all"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               </button>
             </div>
 
-            <div className="p-8 bg-slate-950/30 border-b border-slate-800">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-                <div className="flex flex-col gap-1">
-                  <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Data</span>
+            <div className="p-5 bg-slate-950/30 border-b border-slate-800">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[8px] font-black text-slate-600 uppercase tracking-widest">Data</span>
                   <span className="text-xs font-bold text-slate-300">{formatDate(selectedTransaction.posted_date)}</span>
                 </div>
-                <div className="flex flex-col gap-1">
-                  <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Valor</span>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[8px] font-black text-slate-600 uppercase tracking-widest">Valor</span>
                   <span className={`text-xs font-black ${selectedTransaction.amount < 0 ? 'text-rose-500' : 'text-emerald-400'}`}>
                     R$ {selectedTransaction.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </span>
                 </div>
-                <div className="flex flex-col gap-1 col-span-2">
-                  <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Descrição / Memo</span>
+                <div className="flex flex-col gap-0.5 col-span-2">
+                  <span className="text-[8px] font-black text-slate-600 uppercase tracking-widest">Descrição / Memo</span>
                   <span className="text-xs font-bold text-slate-300 truncate">{selectedTransaction.description}</span>
                 </div>
               </div>
               {selectedTransaction.fit_id && (
-                <div className="mt-4 pt-4 border-t border-slate-800/50">
-                  <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest">FITID: </span>
-                  <span className="text-[10px] font-mono text-slate-500">{selectedTransaction.fit_id}</span>
+                <div className="mt-2 pt-2 border-t border-slate-800/50">
+                  <span className="text-[8px] font-black text-slate-600 uppercase tracking-widest">FITID: </span>
+                  <span className="text-[9px] font-mono text-slate-500 break-all">{selectedTransaction.fit_id}</span>
                 </div>
               )}
             </div>
 
-            <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
-              <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4">Sugestões de Lançamentos</h4>
+            <div className="flex-1 overflow-y-auto p-5 custom-scrollbar">
+              <div className="flex justify-between items-center mb-4">
+                <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">
+                  {isManualMode ? 'Busca Manual de Lançamentos' : 'Sugestões de Lançamentos'}
+                </h4>
+                <button 
+                  onClick={() => {
+                    setIsManualMode(!isManualMode);
+                    setSelectedPostingId('');
+                    if (!isManualMode) handleManualSearch();
+                  }}
+                  className="text-[9px] font-black text-rose-500 uppercase tracking-widest hover:underline"
+                >
+                  {isManualMode ? 'Voltar para Sugestões' : 'Selecionar manualmente'}
+                </button>
+              </div>
               
-              {loadingCandidates ? (
-                <div className="flex flex-col items-center justify-center py-12 gap-3">
-                  <div className="w-8 h-8 border-3 border-rose-500/20 border-t-rose-500 rounded-full animate-spin"></div>
-                  <p className="text-slate-600 text-[9px] font-black uppercase tracking-widest">Buscando sugestões...</p>
-                </div>
-              ) : candidates.length === 0 ? (
-                <div className="py-12 text-center bg-slate-950/50 rounded-3xl border border-dashed border-slate-800">
-                  <p className="text-slate-500 text-xs font-medium">Nenhum lançamento compatível encontrado.</p>
-                  <p className="text-slate-600 text-[10px] mt-1">Verifique o valor e a data (janela de +/- 10 dias).</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {candidates.map((c) => (
-                    <div 
-                      key={c.id}
-                      onClick={() => setSelectedPostingId(c.id)}
-                      className={`p-4 rounded-2xl border transition-all cursor-pointer flex justify-between items-center group ${selectedPostingId === c.id ? 'bg-rose-500/10 border-rose-500/50 shadow-lg shadow-rose-500/5' : 'bg-slate-950/50 border-slate-800 hover:border-slate-700'}`}
-                    >
-                      <div className="flex flex-col gap-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-black text-slate-200 uppercase tracking-tight">{c.favored?.name || 'Sem Entidade'}</span>
-                          <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-widest ${c.status === 'LIQUIDADO' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-amber-500/10 text-amber-500'}`}>
-                            {c.status}
-                          </span>
-                          {c.match_score >= 90 && (
-                            <span className="text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-widest bg-rose-500/20 text-rose-500 animate-pulse">
-                              Sugestão Forte
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-3 text-[10px] text-slate-500 font-medium">
-                          <span>{formatDate(c.occurrence_date)}</span>
-                          <span className="w-1 h-1 bg-slate-800 rounded-full"></span>
-                          <span>{c.accounts?.name}</span>
-                          <span className="w-1 h-1 bg-slate-800 rounded-full"></span>
-                          <span className={c.difference === 0 ? 'text-emerald-500' : 'text-amber-500'}>
-                            Dif: R$ {c.difference.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                          </span>
-                          <span className="w-1 h-1 bg-slate-800 rounded-full"></span>
-                          <span>{c.days_diff} dias</span>
-                        </div>
-                      </div>
-                      <div className="text-right flex items-center gap-4">
-                        <div className="flex flex-col items-end">
-                          <span className="text-sm font-black text-white">R$ {c.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                          <span className={`text-[10px] font-black ${c.match_score >= 80 ? 'text-emerald-400' : c.match_score >= 50 ? 'text-amber-400' : 'text-slate-500'}`}>
-                            {c.match_score}% Match
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-end">
-                          <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${selectedPostingId === c.id ? 'border-rose-500 bg-rose-500 shadow-lg shadow-rose-500/20' : 'border-slate-700 group-hover:border-slate-600'}`}>
-                            {selectedPostingId === c.id && <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
-                          </div>
-                        </div>
+              {isManualMode ? (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-950/50 p-4 rounded-2xl border border-slate-800">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[8px] font-black text-slate-600 uppercase tracking-widest">Busca</label>
+                      <input 
+                        type="text" 
+                        placeholder="Descrição ou Favorecido..."
+                        value={manualQuery}
+                        onChange={e => setManualQuery(e.target.value)}
+                        className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-[10px] font-bold text-slate-300 outline-none focus:border-rose-500"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[8px] font-black text-slate-600 uppercase tracking-widest">Período</label>
+                      <div className="flex items-center gap-2">
+                        <input 
+                          type="date" 
+                          value={manualStartDate}
+                          onChange={e => setManualStartDate(e.target.value)}
+                          className="bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-[9px] font-bold text-slate-300 outline-none w-full"
+                        />
+                        <input 
+                          type="date" 
+                          value={manualEndDate}
+                          onChange={e => setManualEndDate(e.target.value)}
+                          className="bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-[9px] font-bold text-slate-300 outline-none w-full"
+                        />
                       </div>
                     </div>
-                  ))}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[8px] font-black text-slate-600 uppercase tracking-widest">Faixa de Valor</label>
+                      <div className="flex items-center gap-2">
+                        <input 
+                          type="number" 
+                          placeholder="Min"
+                          value={manualMinAmount}
+                          onChange={e => setManualMinAmount(e.target.value)}
+                          className="bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-[9px] font-bold text-slate-300 outline-none w-full"
+                        />
+                        <input 
+                          type="number" 
+                          placeholder="Max"
+                          value={manualMaxAmount}
+                          onChange={e => setManualMaxAmount(e.target.value)}
+                          className="bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-[9px] font-bold text-slate-300 outline-none w-full"
+                        />
+                      </div>
+                    </div>
+                    <div className="md:col-span-3">
+                      <button 
+                        onClick={handleManualSearch}
+                        className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-white text-[9px] font-black uppercase tracking-widest rounded-lg transition-all"
+                      >
+                        Aplicar Filtros
+                      </button>
+                    </div>
+                  </div>
+
+                  {loadingManual ? (
+                    <div className="flex flex-col items-center justify-center py-12 gap-3">
+                      <div className="w-8 h-8 border-3 border-rose-500/20 border-t-rose-500 rounded-full animate-spin"></div>
+                      <p className="text-slate-600 text-[9px] font-black uppercase tracking-widest">Buscando lançamentos...</p>
+                    </div>
+                  ) : manualCandidates.length === 0 ? (
+                    <div className="py-12 text-center bg-slate-950/50 rounded-3xl border border-dashed border-slate-800">
+                      <p className="text-slate-500 text-xs font-medium">Nenhum lançamento encontrado com estes filtros.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {manualCandidates.map((c) => (
+                        <div 
+                          key={c.id}
+                          onClick={() => setSelectedPostingId(c.id)}
+                          className={`p-2.5 rounded-2xl border transition-all cursor-pointer flex justify-between items-center group ${selectedPostingId === c.id ? 'bg-rose-500/10 border-rose-500/50 shadow-lg shadow-rose-500/5' : 'bg-slate-950/50 border-slate-800 hover:border-slate-700'}`}
+                        >
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-black text-slate-200 uppercase tracking-tight">{c.favored?.name || 'Sem Entidade'}</span>
+                              <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-widest ${c.status === 'LIQUIDADO' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-amber-500/10 text-amber-500'}`}>
+                                {c.status}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-3 text-[10px] text-slate-500 font-medium">
+                              <span>{formatDate(c.occurrence_date)}</span>
+                              <span className="w-1 h-1 bg-slate-800 rounded-full"></span>
+                              <span>{c.accounts?.name}</span>
+                              <span className="w-1 h-1 bg-slate-800 rounded-full"></span>
+                              <span className="text-slate-400 truncate max-w-[150px]">{c.observations}</span>
+                            </div>
+                          </div>
+                          <div className="text-right flex items-center gap-4">
+                            <span className="text-sm font-black text-white">R$ {c.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${selectedPostingId === c.id ? 'border-rose-500 bg-rose-500 shadow-lg shadow-rose-500/20' : 'border-slate-700 group-hover:border-slate-600'}`}>
+                              {selectedPostingId === c.id && <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
+              ) : (
+                <>
+                  {loadingCandidates ? (
+                    <div className="flex flex-col items-center justify-center py-12 gap-3">
+                      <div className="w-8 h-8 border-3 border-rose-500/20 border-t-rose-500 rounded-full animate-spin"></div>
+                      <p className="text-slate-600 text-[9px] font-black uppercase tracking-widest">Buscando sugestões...</p>
+                    </div>
+                  ) : candidates.length === 0 ? (
+                    <div className="py-12 text-center bg-slate-950/50 rounded-3xl border border-dashed border-slate-800">
+                      <p className="text-slate-500 text-xs font-medium">Nenhum lançamento compatível encontrado.</p>
+                      <p className="text-slate-600 text-[10px] mt-1">Verifique o valor e a data (janela de +/- 10 dias).</p>
+                      <button 
+                        onClick={() => {
+                          setIsManualMode(true);
+                          handleManualSearch();
+                        }}
+                        className="mt-4 px-6 py-2 bg-slate-800 hover:bg-slate-700 text-white text-[9px] font-black uppercase tracking-widest rounded-xl transition-all"
+                      >
+                        Selecionar lançamento manualmente
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {candidates.map((c) => (
+                        <div 
+                          key={c.id}
+                          onClick={() => setSelectedPostingId(c.id)}
+                          className={`p-2.5 rounded-2xl border transition-all cursor-pointer flex justify-between items-center group ${selectedPostingId === c.id ? 'bg-rose-500/10 border-rose-500/50 shadow-lg shadow-rose-500/5' : 'bg-slate-950/50 border-slate-800 hover:border-slate-700'}`}
+                        >
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-black text-slate-200 uppercase tracking-tight">{c.favored?.name || 'Sem Entidade'}</span>
+                              <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-widest ${c.status === 'LIQUIDADO' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-amber-500/10 text-amber-500'}`}>
+                                {c.status}
+                              </span>
+                              {c.match_score >= 90 && (
+                                <span className="text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-widest bg-rose-500/20 text-rose-500 animate-pulse">
+                                  Sugestão Forte
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-3 text-[10px] text-slate-500 font-medium">
+                              <span>{formatDate(c.occurrence_date)}</span>
+                              <span className="w-1 h-1 bg-slate-800 rounded-full"></span>
+                              <span>{c.accounts?.name}</span>
+                              <span className="w-1 h-1 bg-slate-800 rounded-full"></span>
+                              <span className={c.difference === 0 ? 'text-emerald-500' : 'text-amber-500'}>
+                                Dif: R$ {c.difference.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </span>
+                              <span className="w-1 h-1 bg-slate-800 rounded-full"></span>
+                              <span>{c.days_diff} dias</span>
+                            </div>
+                            {c.reasons && c.reasons.length > 0 && (
+                              <div className="flex gap-2 mt-1">
+                                {c.reasons.map((r: string, idx: number) => (
+                                  <span key={idx} className="text-[8px] font-bold text-slate-600 uppercase tracking-tighter bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800">
+                                    {r}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <div className="text-right flex items-center gap-4">
+                            <div className="flex flex-col items-end">
+                              <span className="text-sm font-black text-white">R$ {c.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                              <span className={`text-[10px] font-black ${c.match_score >= 80 ? 'text-emerald-400' : c.match_score >= 50 ? 'text-amber-400' : 'text-slate-500'}`}>
+                                {c.match_score}% Match
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-end">
+                              <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${selectedPostingId === c.id ? 'border-rose-500 bg-rose-500 shadow-lg shadow-rose-500/20' : 'border-slate-700 group-hover:border-slate-600'}`}>
+                                {selectedPostingId === c.id && <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </div>
 
-            <div className="p-8 border-t border-slate-800 bg-slate-900/50 flex gap-4">
+            <div className="p-5 border-t border-slate-800 bg-slate-900/50 flex gap-4">
               <button 
                 onClick={() => setSelectedTransaction(null)}
-                className="flex-1 px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white hover:bg-slate-800 transition-all border border-slate-800"
+                className="flex-1 px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white hover:bg-slate-800 transition-all border border-slate-800"
               >
                 Cancelar
               </button>
               <button 
                 disabled={!selectedPostingId || reconciling}
                 onClick={handleConfirmReconciliation}
-                className={`flex-[2] px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shadow-xl ${!selectedPostingId || reconciling ? 'bg-slate-800 text-slate-600 cursor-not-allowed' : 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-600/20'}`}
+                className={`flex-[2] px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shadow-xl ${!selectedPostingId || reconciling ? 'bg-slate-800 text-slate-600 cursor-not-allowed' : 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-600/20'}`}
               >
                 {reconciling ? 'Processando...' : 'Confirmar Conciliação'}
               </button>

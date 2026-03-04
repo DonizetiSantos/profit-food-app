@@ -174,14 +174,14 @@ export const ofxImportService = {
     const absAmount = Math.abs(bankTx.amount);
     const dateObj = new Date(bankTx.posted_date);
     
-    // Window of -15 to +15 days
+    // Window of -10 to +10 days
     const startDate = new Date(dateObj);
-    startDate.setDate(startDate.getDate() - 15);
+    startDate.setDate(startDate.getDate() - 10);
     const endDate = new Date(dateObj);
-    endDate.setDate(endDate.getDate() + 15);
+    endDate.setDate(endDate.getDate() + 10);
 
-    // Tolerance: difference of value <= 2.00
-    const tolerance = 2.00;
+    // Dynamic Tolerance: max(0.10, abs(bankTx.amount) * 0.005)
+    const tolerance = Math.max(0.10, absAmount * 0.005);
     const minAmount = absAmount - tolerance;
     const maxAmount = absAmount + tolerance;
 
@@ -195,6 +195,7 @@ export const ofxImportService = {
         favored (id, name)
       `)
       .eq('status', 'PROVISIONADO')
+      .not('accounts.name', 'ilike', 'VENDAS GERAIS') // Exclude Vendas Gerais
       .gte('occurrence_date', startDate.toISOString().split('T')[0])
       .lte('occurrence_date', endDate.toISOString().split('T')[0])
       .gte('amount', minAmount)
@@ -202,6 +203,9 @@ export const ofxImportService = {
       .order('occurrence_date', { ascending: true });
 
     if (error) throw error;
+
+    // Filter out null accounts (which happens if the .not filter on join table doesn't work as expected in some Supabase versions)
+    const filteredData = data.filter(p => p.accounts && p.accounts.name.toUpperCase() !== 'VENDAS GERAIS');
 
     // Fetch payee mapping for this bank and description
     const { data: mapping } = await supabase
@@ -211,52 +215,119 @@ export const ofxImportService = {
       .eq('payee_key', bankTx.description)
       .maybeSingle();
 
+    // Text normalization helper
+    const normalize = (text: string) => {
+      return (text || '')
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9\s]/g, "")
+        .split(/\s+/)
+        .filter(word => word.length > 2);
+    };
+
+    const bankWords = normalize(bankTx.description);
+
     // Scoring logic
-    const candidates = data.map(p => {
+    const candidates = filteredData.map(p => {
       let score = 0;
+      let reasons: string[] = [];
       
       // 1. Value (up to 60 points)
       const diff = Math.abs(p.amount - absAmount);
-      if (diff === 0) score += 60;
-      else {
-        // Progressive scale: 60 * (1 - diff/2.00)
-        score += Math.max(0, 60 * (1 - diff / tolerance));
+      if (diff === 0) {
+        score += 60;
+        reasons.push("Valor exato");
+      } else {
+        const valScore = Math.max(0, 60 * (1 - diff / tolerance));
+        score += valScore;
+        if (valScore > 40) reasons.push("Valor muito próximo");
+        else reasons.push("Valor aproximado");
       }
 
       // 2. Date proximity (up to 25 points)
       const pDate = new Date(p.occurrence_date);
       const daysDiff = Math.abs((pDate.getTime() - dateObj.getTime()) / (1000 * 60 * 60 * 24));
-      if (daysDiff === 0) score += 25;
-      else {
-        // Scale: 25 * (1 - daysDiff/15)
-        score += Math.max(0, 25 * (1 - daysDiff / 15));
+      if (daysDiff === 0) {
+        score += 25;
+        reasons.push("Mesma data");
+      } else {
+        const dateScore = Math.max(0, 25 * (1 - daysDiff / 10));
+        score += dateScore;
+        if (dateScore > 15) reasons.push("Data próxima");
       }
 
       // 3. Text similarity (up to 15 points)
-      const bankDesc = (bankTx.description || '').toLowerCase();
-      const entityName = (p.favored?.name || '').toLowerCase();
-      const postingNotes = (p.notes || '').toLowerCase();
+      const entityWords = normalize(p.favored?.name);
+      const noteWords = normalize(p.observations);
       
       let textScore = 0;
-      if (entityName && bankDesc.includes(entityName)) textScore += 10;
-      if (postingNotes && bankDesc.includes(postingNotes)) textScore += 5;
-      score += Math.min(15, textScore);
+      const hasEntityMatch = entityWords.some(w => bankWords.includes(w));
+      const hasNoteMatch = noteWords.some(w => bankWords.includes(w));
       
-      // Bonus for learned mapping (keep this as it's a good feature from previous step)
+      if (hasEntityMatch) textScore += 10;
+      if (hasNoteMatch) textScore += 5;
+      
+      score += Math.min(15, textScore);
+      if (textScore > 0) reasons.push("Texto semelhante");
+      
+      // Bonus for learned mapping
       if (mapping && p.favored?.id === mapping.entity_id) {
         score += 30; 
+        reasons.push("Favorecido frequente");
       }
 
       return {
         ...p,
         match_score: Math.min(100, Math.round(score)),
+        reasons: Array.from(new Set(reasons)).slice(0, 2),
         difference: diff,
         days_diff: Math.round(daysDiff),
         has_mapping: mapping && p.favored?.id === mapping.entity_id
       };
     });
 
-    return candidates.sort((a, b) => b.match_score - a.match_score);
+    return candidates.sort((a, b) => b.match_score - a.match_score).slice(0, 10);
+  },
+
+  async searchPostings(filters: {
+    query?: string;
+    startDate?: string;
+    endDate?: string;
+    minAmount?: number;
+    maxAmount?: number;
+  }) {
+    let query = supabase
+      .from('postings')
+      .select(`
+        *,
+        accounts (name),
+        favored (id, name)
+      `)
+      .eq('status', 'PROVISIONADO')
+      .not('accounts.name', 'ilike', 'VENDAS GERAIS')
+      .order('occurrence_date', { ascending: false });
+
+    if (filters.startDate) query = query.gte('occurrence_date', filters.startDate);
+    if (filters.endDate) query = query.lte('occurrence_date', filters.endDate);
+    if (filters.minAmount !== undefined) query = query.gte('amount', filters.minAmount);
+    if (filters.maxAmount !== undefined) query = query.gte('amount', filters.maxAmount);
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    // Extra safety filter
+    const filteredData = data.filter(p => p.accounts && p.accounts.name.toUpperCase() !== 'VENDAS GERAIS');
+
+    if (filters.query) {
+      const q = filters.query.toLowerCase();
+      return filteredData.filter(p => 
+        (p.observations || '').toLowerCase().includes(q) || 
+        (p.favored?.name || '').toLowerCase().includes(q)
+      );
+    }
+
+    return filteredData;
   },
 
   async savePayeeMapping(bankId: string, payeeKey: string, entityId: string) {

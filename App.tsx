@@ -13,7 +13,7 @@ import { FinancialAnalysis } from './components/FinancialAnalysis';
 import { FinancialAnalysisData } from './services/geminiService';
 import { datastore, AppState } from './data/datastore';
 import { Reconciliation } from './components/Reconciliation';
-import { supabase } from './lib/supabase';
+import { supabase } from './src/lib/supabase';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -438,7 +438,7 @@ const App: React.FC = () => {
           />
         )}
         {currentPage === 'lista' && <PostingsList initialSearch={globalSearchFilter} postings={postings} accounts={accounts} banks={banks} paymentMethods={paymentMethods} entities={favored} onDeletePosting={handleDeletePosting} onEditPosting={handleEditPosting} />}
-        {currentPage === 'conciliacao' && <Reconciliation banks={banks} onRefresh={initData} />}
+        {currentPage === 'conciliacao' && <Reconciliation banks={banks} onRefresh={initData} user={user} />}
         {currentPage === 'contas' && <AccountRegistration subgroups={subgroups} accounts={accounts} onAddAccount={handleAddAccount} onDeleteAccount={handleDeleteAccount} />}
         {currentPage === 'cadastros' && <GeneralRegistry banks={banks} paymentMethods={paymentMethods} favored={favored} onAddBank={handleAddBank} onDeleteBank={handleDeleteBank} onAddMethod={handleAddMethod} onDeleteMethod={handleDeleteMethod} onAddFavored={handleAddFavored} onDeleteFavored={handleDeleteFavored} onExport={handleExportData} onImport={handleImportData} onReload={handleReloadData} onReset={handleResetData} />}
       </main>
