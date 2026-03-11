@@ -12,6 +12,7 @@ export const Auth: React.FC<Props> = ({ onLogin }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  const [companyName, setCompanyName] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -37,29 +38,66 @@ export const Auth: React.FC<Props> = ({ onLogin }) => {
           });
         }
       } else {
-        if (!name || !email || !password) {
-          setError('Preencha todos os campos.');
+        if (!name || !companyName || !email || !password) {
+          setError('Preencha todos os campos, incluindo o nome da empresa.');
           setLoading(false);
           return;
         }
 
-        const { data, error: authError } = await supabase.auth.signUp({
+        // 1. Create user in Supabase Auth
+        const { data: authData, error: authError } = await supabase.auth.signUp({
           email,
           password,
           options: {
             data: {
               name: name,
+              company_name: companyName,
             },
           },
         });
 
         if (authError) throw authError;
+        if (!authData.user) throw new Error('Erro ao criar usuário.');
 
-        if (data.user) {
+        const userId = authData.user.id;
+
+        // 2. Create company in 'companies' table
+        const companyId = crypto.randomUUID();
+        const { error: companyError } = await supabase
+          .from('companies')
+          .insert({
+            id: companyId,
+            name: companyName,
+            legal_name: companyName,
+            is_active: true
+          });
+
+        if (companyError) {
+          console.error('Error creating company:', companyError);
+          throw new Error('Usuário criado, mas erro ao registrar empresa. Contate o suporte.');
+        }
+
+        // 3. Create link in 'company_users' table
+        const { error: linkError } = await supabase
+          .from('company_users')
+          .insert({
+            id: crypto.randomUUID(),
+            company_id: companyId,
+            user_id: userId,
+            role: 'owner',
+            is_active: true
+          });
+
+        if (linkError) {
+          console.error('Error linking user to company:', linkError);
+          throw new Error('Usuário e empresa criados, mas erro ao vincular. Contate o suporte.');
+        }
+
+        if (authData.user) {
           onLogin({
-            id: data.user.id,
-            name: data.user.user_metadata?.name || data.user.email || '',
-            email: data.user.email || '',
+            id: authData.user.id,
+            name: authData.user.user_metadata?.name || authData.user.email || '',
+            email: authData.user.email || '',
           });
         }
       }
@@ -107,16 +145,30 @@ export const Auth: React.FC<Props> = ({ onLogin }) => {
 
           <form onSubmit={handleSubmit} className="space-y-6">
             {!isLogin && (
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Nome Completo</label>
-                <input 
-                  type="text" 
-                  value={name} 
-                  onChange={e => setName(e.target.value)} 
-                  className="w-full p-4 bg-slate-950 border border-slate-800 rounded-2xl text-white outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 transition-all font-bold text-sm"
-                  placeholder="Seu nome"
-                />
-              </div>
+              <>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Nome Completo</label>
+                  <input 
+                    type="text" 
+                    value={name} 
+                    onChange={e => setName(e.target.value)} 
+                    className="w-full p-4 bg-slate-950 border border-slate-800 rounded-2xl text-white outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 transition-all font-bold text-sm"
+                    placeholder="Seu nome"
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Nome da Empresa</label>
+                  <input 
+                    type="text" 
+                    value={companyName} 
+                    onChange={e => setCompanyName(e.target.value)} 
+                    className="w-full p-4 bg-slate-950 border border-slate-800 rounded-2xl text-white outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 transition-all font-bold text-sm"
+                    placeholder="Nome da sua empresa"
+                    required
+                  />
+                </div>
+              </>
             )}
 
             <div className="space-y-2">

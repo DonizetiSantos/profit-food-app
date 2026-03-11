@@ -393,13 +393,15 @@ const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void
               </svg>
             </div>
             <div className="flex flex-col">
-              <span className="text-xl font-black text-white leading-none tracking-tight uppercase">PROFIT FOOD</span>
+              <div className="flex items-baseline gap-3">
+                <span className="text-xl font-black text-white leading-none tracking-tight uppercase">PROFIT FOOD</span>
+                <span className="text-[11px] font-black text-rose-500 uppercase tracking-widest bg-rose-500/10 px-3 py-1 rounded-lg border border-rose-500/20">
+                  {activeCompany.name}
+                </span>
+              </div>
               <div className="flex items-center gap-2 mt-1">
                 <span className="text-[9px] font-medium text-slate-400 uppercase tracking-widest flex items-center gap-2">
                   Olá, {user.name.split(' ')[0]} {syncing && <span className="w-1.5 h-1.5 bg-rose-500 rounded-full animate-ping"></span>}
-                </span>
-                <span className="text-[9px] font-black text-rose-500/80 uppercase tracking-widest bg-rose-500/5 px-2 py-0.5 rounded border border-rose-500/10">
-                  {activeCompany.name}
                 </span>
               </div>
             </div>
