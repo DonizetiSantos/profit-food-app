@@ -17,7 +17,7 @@ export interface ImportResult {
 }
 
 export const ofxImportService = {
-  async importOfxFile(bankId: string, file: File): Promise<ImportResult> {
+  async importOfxFile(bankId: string, file: File, companyId: string): Promise<ImportResult> {
     try {
       const buffer = await file.arrayBuffer();
       const decoder = new TextDecoder("windows-1252");
@@ -32,6 +32,7 @@ export const ofxImportService = {
         .from('ofx_imports')
         .select('id')
         .eq('file_hash', fileHash)
+        .eq('company_id', companyId)
         .maybeSingle();
 
       if (existingImport) {
@@ -76,6 +77,7 @@ export const ofxImportService = {
         .from('bank_transactions')
         .select('fit_id')
         .eq('bank_id', bankId)
+        .eq('company_id', companyId)
         .in('fit_id', fitIds);
 
       if (fetchError) throw fetchError;
@@ -96,6 +98,7 @@ export const ofxImportService = {
           .insert({
             id: crypto.randomUUID(),
             bank_id: bankId,
+            company_id: companyId,
             file_hash: fileHash,
             file_name: file.name,
             from_date: parsedOfx.fromDate || null,
@@ -110,6 +113,7 @@ export const ofxImportService = {
       if (newTransactions.length > 0) {
         const dbTransactions = newTransactions.map(t => ({
           bank_id: bankId,
+          company_id: companyId,
           posted_date: t.postedDate,
           amount: t.amount,
           description: t.memo,
@@ -148,7 +152,7 @@ export const ofxImportService = {
     }
   },
 
-  async getTransactions(bankId: string, fromDate?: string, toDate?: string) {
+  async getTransactions(bankId: string, companyId: string, fromDate?: string, toDate?: string) {
     let query = supabase
       .from('bank_transactions')
       .select(`
@@ -156,6 +160,7 @@ export const ofxImportService = {
         reconciliations (id)
       `)
       .eq('bank_id', bankId)
+      .eq('company_id', companyId)
       .order('posted_date', { ascending: false });
 
     if (fromDate) query = query.gte('posted_date', fromDate);
@@ -170,7 +175,7 @@ export const ofxImportService = {
     }));
   },
 
-  async getReconciliationCandidates(bankTx: any) {
+  async getReconciliationCandidates(bankTx: any, companyId: string) {
     const absAmount = Math.abs(bankTx.amount);
     const dateObj = new Date(bankTx.posted_date);
     
@@ -194,6 +199,7 @@ export const ofxImportService = {
         accounts (name),
         favored (id, name)
       `)
+      .eq('company_id', companyId)
       .eq('status', 'PROVISIONADO')
       .not('accounts.name', 'ilike', 'VENDAS GERAIS') // Exclude Vendas Gerais
       .gte('occurrence_date', startDate.toISOString().split('T')[0])
@@ -290,7 +296,7 @@ export const ofxImportService = {
     return candidates.sort((a, b) => b.match_score - a.match_score).slice(0, 10);
   },
 
-  async searchPostings(filters: {
+  async searchPostings(companyId: string, filters: {
     query?: string;
     startDate?: string;
     endDate?: string;
@@ -304,6 +310,7 @@ export const ofxImportService = {
         accounts (name),
         favored (id, name)
       `)
+      .eq('company_id', companyId)
       .eq('status', 'PROVISIONADO')
       .not('accounts.name', 'ilike', 'VENDAS GERAIS')
       .order('occurrence_date', { ascending: false });
@@ -330,16 +337,17 @@ export const ofxImportService = {
     return filteredData;
   },
 
-  async savePayeeMapping(bankId: string, payeeKey: string, entityId: string) {
+  async savePayeeMapping(bankId: string, payeeKey: string, entityId: string, companyId: string) {
     const { error } = await supabase
       .from('ofx_payee_mappings')
       .upsert({
         bank_id: bankId,
+        company_id: companyId,
         payee_key: payeeKey,
         entity_id: entityId,
         confidence: 1.0,
         updated_at: new Date().toISOString()
-      }, { onConflict: 'bank_id,payee_key' });
+      }, { onConflict: 'bank_id,payee_key,company_id' });
     
     if (error) console.error("Error saving payee mapping:", error);
   }

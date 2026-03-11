@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Bank, User } from '../types';
 import { ofxImportService } from '../services/ofxImportService';
 import { supabase } from '../src/lib/supabase';
+import { useActiveCompany } from '../src/contexts/CompanyContext';
 
 interface Props {
   banks: Bank[];
@@ -10,6 +11,7 @@ interface Props {
 }
 
 export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
+  const { activeCompany } = useActiveCompany();
   const [selectedBankId, setSelectedBankId] = useState<string>('');
   const [transactions, setTransactions] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -34,13 +36,13 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
   const [loadingManual, setLoadingManual] = useState(false);
 
   const loadTransactions = async () => {
-    if (!selectedBankId) {
+    if (!selectedBankId || !activeCompany) {
       setTransactions([]);
       return;
     }
     setLoading(true);
     try {
-      const data = await ofxImportService.getTransactions(selectedBankId, fromDate, toDate);
+      const data = await ofxImportService.getTransactions(selectedBankId, activeCompany.id, fromDate, toDate);
       setTransactions(data);
       console.log(`Transactions loaded: ${data.length}`);
     } catch (err) {
@@ -67,7 +69,7 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!selectedBankId) {
+    if (!selectedBankId || !activeCompany) {
       alert("Selecione o banco/conta antes de importar.");
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
@@ -75,7 +77,7 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
 
     setImporting(true);
     try {
-      const result = await ofxImportService.importOfxFile(selectedBankId, file);
+      const result = await ofxImportService.importOfxFile(selectedBankId, file, activeCompany.id);
       
       if (result.status === 'SUCCESS') {
         console.log("OFX import ok, refreshing transactions...");
@@ -111,6 +113,7 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
   };
 
   const handleReconcileClick = async (transaction: any) => {
+    if (!activeCompany) return;
     console.log("Conciliar clicked", transaction.id);
     setSelectedTransaction(transaction);
     setLoadingCandidates(true);
@@ -125,7 +128,7 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
     setManualQuery('');
 
     try {
-      const results = await ofxImportService.getReconciliationCandidates(transaction);
+      const results = await ofxImportService.getReconciliationCandidates(transaction, activeCompany.id);
       setCandidates(results);
       
       // Auto-select if score >= 90
@@ -151,9 +154,10 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
   };
 
   const handleManualSearch = async () => {
+    if (!activeCompany) return;
     setLoadingManual(true);
     try {
-      const results = await ofxImportService.searchPostings({
+      const results = await ofxImportService.searchPostings(activeCompany.id, {
         query: manualQuery,
         startDate: manualStartDate,
         endDate: manualEndDate,
@@ -170,6 +174,7 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
   };
 
   const performReconciliation = async (bankTx: any, posting: any, type: 'MANUAL' | 'AUTO' = 'MANUAL') => {
+    if (!activeCompany) return;
     console.log(`[Reconciliation] Starting (${type})`, { bankTxId: bankTx.id, postingId: posting.id, amount: bankTx.amount });
     setReconciling(true);
 
@@ -180,6 +185,7 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
       const { error: recError } = await supabase
         .from('reconciliations')
         .insert({
+          company_id: activeCompany.id,
           bank_transaction_id: bankTx.id,
           posting_id: posting.id,
           match_type: type,
@@ -195,6 +201,7 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
         const { error: retryError } = await supabase
           .from('reconciliations')
           .insert({
+            company_id: activeCompany.id,
             bank_transaction_id: bankTx.id,
             posting_id: posting.id,
             match_type: type,
@@ -222,7 +229,7 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
 
       // (C) Save learned mapping for future auto-reconciliations
       if (posting.favored?.id) {
-        await ofxImportService.savePayeeMapping(bankTx.bank_id, bankTx.description, posting.favored.id);
+        await ofxImportService.savePayeeMapping(bankTx.bank_id, bankTx.description, posting.favored.id, activeCompany.id);
       }
 
       console.log("[Reconciliation] Success!");

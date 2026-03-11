@@ -5,11 +5,12 @@ export const reconciliationService = {
   /**
    * Lista transações bancárias importadas para um banco específico em um período.
    */
-  async listBankTransactions(bankId: string, from?: string, to?: string): Promise<BankTransaction[]> {
+  async listBankTransactions(bankId: string, companyId: string, from?: string, to?: string): Promise<BankTransaction[]> {
     let query = supabase
       .from('bank_transactions')
       .select('*')
-      .eq('bank_id', bankId);
+      .eq('bank_id', bankId)
+      .eq('company_id', companyId);
 
     if (from) query = query.gte('posted_date', from);
     if (to) query = query.lte('posted_date', to);
@@ -35,18 +36,20 @@ export const reconciliationService = {
   /**
    * Lista transações bancárias que ainda não foram conciliadas.
    */
-  async listUnreconciledTransactions(bankId: string, from?: string, to?: string): Promise<BankTransaction[]> {
+  async listUnreconciledTransactions(bankId: string, companyId: string, from?: string, to?: string): Promise<BankTransaction[]> {
     // Busca IDs já conciliados
     const { data: reconciled } = await supabase
       .from('reconciliations')
-      .select('bank_transaction_id');
+      .select('bank_transaction_id')
+      .eq('company_id', companyId);
     
     const reconciledIds = (reconciled || []).map(r => r.bank_transaction_id);
 
     let query = supabase
       .from('bank_transactions')
       .select('*')
-      .eq('bank_id', bankId);
+      .eq('bank_id', bankId)
+      .eq('company_id', companyId);
 
     if (reconciledIds.length > 0) {
       query = query.not('id', 'in', `(${reconciledIds.join(',')})`);
@@ -76,7 +79,7 @@ export const reconciliationService = {
   /**
    * Busca sugestões de lançamentos para uma transação bancária.
    */
-  async findSuggestions(transaction: BankTransaction): Promise<FinancialPosting[]> {
+  async findSuggestions(transaction: BankTransaction, companyId: string): Promise<FinancialPosting[]> {
     const absAmount = Math.abs(transaction.amount);
     const tolerance = 0.05;
     
@@ -93,6 +96,7 @@ export const reconciliationService = {
     const { data, error } = await supabase
       .from('postings')
       .select('*, favored(name), accounts(name)')
+      .eq('company_id', companyId)
       .gte('occurrence_date', fromStr)
       .lte('occurrence_date', toStr)
       .gte('amount', absAmount - tolerance)
@@ -133,11 +137,12 @@ export const reconciliationService = {
   /**
    * Executa a conciliação manual.
    */
-  async reconcile(bankTransactionId: string, posting: FinancialPosting, transactionDate: string, bankId: string): Promise<void> {
+  async reconcile(bankTransactionId: string, posting: FinancialPosting, transactionDate: string, bankId: string, companyId: string): Promise<void> {
     // 1. Inserir reconciliação
     const { error: recError } = await supabase
       .from('reconciliations')
       .insert({
+        company_id: companyId,
         bank_transaction_id: bankTransactionId,
         posting_id: posting.id,
         match_type: 'MANUAL',
@@ -156,7 +161,8 @@ export const reconciliationService = {
           bank_id: bankId,
           liquidation_date: transactionDate
         })
-        .eq('id', posting.id);
+        .eq('id', posting.id)
+        .eq('company_id', companyId);
       
       if (postError) throw postError;
     }
@@ -167,11 +173,12 @@ export const reconciliationService = {
   /**
    * Remove uma conciliação.
    */
-  async deleteReconciliation(id: string): Promise<void> {
+  async deleteReconciliation(id: string, companyId: string): Promise<void> {
     const { error } = await supabase
       .from('reconciliations')
       .delete()
-      .eq('id', id);
+      .eq('id', id)
+      .eq('company_id', companyId);
     
     if (error) throw error;
   }

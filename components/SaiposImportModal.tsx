@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Bank, PaymentMethod } from '../types';
 import { saiposImportService, SaiposImportPreviewItem } from '../services/saiposImportService';
+import { useActiveCompany } from '../src/contexts/CompanyContext';
 
 interface Props {
   isOpen: boolean;
@@ -11,6 +12,7 @@ interface Props {
 }
 
 export const SaiposImportModal: React.FC<Props> = ({ isOpen, onClose, banks, paymentMethods, onSuccess }) => {
+  const { activeCompany } = useActiveCompany();
   const [file, setFile] = useState<File | null>(null);
   const [previewItems, setPreviewItems] = useState<SaiposImportPreviewItem[]>([]);
   const [fileHash, setFileHash] = useState('');
@@ -22,11 +24,11 @@ export const SaiposImportModal: React.FC<Props> = ({ isOpen, onClose, banks, pay
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
-    if (!selectedFile) return;
+    if (!selectedFile || !activeCompany) return;
 
     setLoading(true);
     try {
-      const preview = await saiposImportService.preparePreview(selectedFile);
+      const preview = await saiposImportService.preparePreview(selectedFile, activeCompany.id);
       setFile(selectedFile);
       setPreviewItems(preview.items);
       setFileHash(preview.fileHash);
@@ -47,7 +49,7 @@ export const SaiposImportModal: React.FC<Props> = ({ isOpen, onClose, banks, pay
   };
 
   const handleConfirm = async () => {
-    if (!file || !fileHash) return;
+    if (!file || !fileHash || !activeCompany) return;
 
     setImporting(true);
     try {
@@ -57,6 +59,7 @@ export const SaiposImportModal: React.FC<Props> = ({ isOpen, onClose, banks, pay
         fileHash,
         file.name,
         previewItems,
+        activeCompany.id,
         fromDate,
         toDate,
         caixaEmpresa

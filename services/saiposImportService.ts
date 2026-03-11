@@ -21,11 +21,12 @@ export interface SaiposImportPreviewItem extends SaiposVendaRow {
 }
 
 export const saiposImportService = {
-  async getMappings(labels: string[]): Promise<Record<string, PdvMapping>> {
+  async getMappings(labels: string[], companyId: string): Promise<Record<string, PdvMapping>> {
     const { data, error } = await supabase
       .from('pdv_payment_mapping')
       .select('*')
       .eq('source', 'SAIPOS')
+      .eq('company_id', companyId)
       .in('raw_label', labels);
 
     if (error) throw error;
@@ -37,11 +38,12 @@ export const saiposImportService = {
     return mappingMap;
   },
 
-  async getVendasGeraisAccount(): Promise<string> {
+  async getVendasGeraisAccount(companyId: string): Promise<string> {
     // 1. Look for existing "Vendas Gerais"
     const { data: existing, error } = await supabase
       .from('accounts')
       .select('id')
+      .eq('company_id', companyId)
       .eq('name', 'VENDAS GERAIS')
       .eq('group_id', 'RECEITAS')
       .maybeSingle();
@@ -50,11 +52,12 @@ export const saiposImportService = {
     if (existing) return existing.id;
 
     // 2. Create if not exists
-    const id = 'acc-vendas-gerais';
+    const id = crypto.randomUUID();
     const { error: insError } = await supabase
       .from('accounts')
       .insert({
         id,
+        company_id: companyId,
         name: 'VENDAS GERAIS',
         subgroup_id: 's-entradas-op',
         group_id: 'RECEITAS',
@@ -63,11 +66,16 @@ export const saiposImportService = {
 
     if (insError) {
       // If subgroup doesn't exist, we might need to find a valid one
-      const { data: subgroups } = await supabase.from('accounts').select('subgroup_id').eq('group_id', 'RECEITAS').limit(1);
+      const { data: subgroups } = await supabase.from('accounts')
+        .select('subgroup_id')
+        .eq('company_id', companyId)
+        .eq('group_id', 'RECEITAS')
+        .limit(1);
       const subId = subgroups?.[0]?.subgroup_id || 'RECEITAS';
       
       await supabase.from('accounts').insert({
         id,
+        company_id: companyId,
         name: 'VENDAS GERAIS',
         subgroup_id: subId,
         group_id: 'RECEITAS',
@@ -103,7 +111,7 @@ export const saiposImportService = {
     return { default_status: 'PROVISIONADO' };
   },
 
-  async preparePreview(file: File): Promise<{ 
+  async preparePreview(file: File, companyId: string): Promise<{ 
     items: SaiposImportPreviewItem[]; 
     fileHash: string;
     fromDate?: string;
@@ -116,6 +124,7 @@ export const saiposImportService = {
     const { data: existing } = await supabase
       .from('pdv_imports')
       .select('id')
+      .eq('company_id', companyId)
       .eq('file_hash', fileHash)
       .maybeSingle();
 
@@ -125,7 +134,7 @@ export const saiposImportService = {
 
     const parsed = await parseSaiposXlsx(file);
     const labels = Array.from(new Set(parsed.rows.map(r => r.paymentLabel)));
-    const mappings = await this.getMappings(labels);
+    const mappings = await this.getMappings(labels, companyId);
 
     const items: SaiposImportPreviewItem[] = parsed.rows.map(row => {
       const mapping = mappings[row.paymentLabel];
@@ -152,11 +161,12 @@ export const saiposImportService = {
     fileHash: string,
     fileName: string,
     items: SaiposImportPreviewItem[],
+    companyId: string,
     fromDate?: string,
     toDate?: string,
     caixaEmpresaId?: string
   ): Promise<void> {
-    const accountId = await this.getVendasGeraisAccount();
+    const accountId = await this.getVendasGeraisAccount(companyId);
     
     // 1. Create PDV Import record
     const importId = crypto.randomUUID();
@@ -164,6 +174,7 @@ export const saiposImportService = {
       .from('pdv_imports')
       .insert({
         id: importId,
+        company_id: companyId,
         source: 'SAIPOS',
         file_hash: fileHash,
         file_name: fileName,
@@ -193,6 +204,7 @@ export const saiposImportService = {
 
       postings.push({
         id: postingId,
+        company_id: companyId,
         status: item.suggestedStatus,
         competence_date: item.date,
         occurrence_date: item.date,
@@ -207,6 +219,7 @@ export const saiposImportService = {
 
       if (!seenLabels.has(item.paymentLabel)) {
         mappingsToUpsert.push({
+          company_id: companyId,
           source: 'SAIPOS',
           raw_label: item.paymentLabel,
           payment_method_id: item.suggestedMethodId || null,
@@ -223,7 +236,7 @@ export const saiposImportService = {
     
     // Upsert mappings
     if (mappingsToUpsert.length > 0) {
-      await supabase.from('pdv_payment_mapping').upsert(mappingsToUpsert, { onConflict: 'source, raw_label' });
+      await supabase.from('pdv_payment_mapping').upsert(mappingsToUpsert, { onConflict: 'company_id, source, raw_label' });
     }
 
     // Insert postings
@@ -232,6 +245,7 @@ export const saiposImportService = {
 
     // Insert import items
     const importItems = postings.map((p, i) => ({
+      company_id: companyId,
       pdv_import_id: importId,
       posting_id: p.id,
       raw_label: items[i].paymentLabel,

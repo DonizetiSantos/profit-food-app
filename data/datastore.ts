@@ -20,10 +20,12 @@ const LOCAL_STORAGE_KEYS = {
 };
 
 // Helper to map JS objects to DB snake_case for Supabase
-const mapToDb = (table: string, data: any) => {
-  if (table === 'banks' || table === 'payment_methods') return data;
+const mapToDb = (table: string, data: any, companyId: string) => {
+  const base = { company_id: companyId };
+  if (table === 'banks' || table === 'payment_methods') return { ...base, ...data };
   if (table === 'favored') {
     return {
+      ...base,
       id: data.id,
       name: data.name,
       type: data.type,
@@ -32,6 +34,7 @@ const mapToDb = (table: string, data: any) => {
   }
   if (table === 'accounts') {
     return {
+      ...base,
       id: data.id,
       name: data.name,
       subgroup_id: data.subgroupId,
@@ -41,6 +44,7 @@ const mapToDb = (table: string, data: any) => {
   }
   if (table === 'postings') {
     return {
+      ...base,
       id: data.id,
       status: data.status,
       competence_date: data.competenceDate,
@@ -58,6 +62,7 @@ const mapToDb = (table: string, data: any) => {
   }
   if (table === 'xml_item_mappings') {
     return {
+      ...base,
       id: data.id,
       supplier_cnpj: data.supplierCnpj,
       match_type: data.matchType,
@@ -66,14 +71,14 @@ const mapToDb = (table: string, data: any) => {
       updated_at: data.updatedAt
     };
   }
-  return data;
+  return { ...base, ...data };
 };
 
 export const datastore = {
-  async loadAll(): Promise<AppState> {
-    console.log('[DataStore] Starting loadAll (Supabase-only)...');
+  async loadAll(companyId: string): Promise<AppState> {
+    console.log(`[DataStore] Starting loadAll for company ${companyId} (Supabase-only)...`);
     try {
-      const state = await this.syncFromSupabase();
+      const state = await this.syncFromSupabase(companyId);
       console.log('[DataStore] Successfully loaded from Supabase.');
       return state;
     } catch (error) {
@@ -82,10 +87,10 @@ export const datastore = {
     }
   },
 
-  async saveAll(state: AppState): Promise<void> {
-    console.log('[DataStore] Starting saveAll (Supabase)...');
+  async saveAll(state: AppState, companyId: string): Promise<void> {
+    console.log(`[DataStore] Starting saveAll for company ${companyId} (Supabase)...`);
     try {
-      await this.syncToSupabase(state);
+      await this.syncToSupabase(state, companyId);
       console.log('[DataStore] Successfully saved to Supabase.');
       
       // Update LocalStorage only as a secondary cache
@@ -101,9 +106,9 @@ export const datastore = {
     }
   },
 
-  async upsertOne(table: string, row: any): Promise<void> {
-    console.log(`[DataStore] Upserting to ${table}...`);
-    const dbRow = mapToDb(table, row);
+  async upsertOne(table: string, row: any, companyId: string): Promise<void> {
+    console.log(`[DataStore] Upserting to ${table} for company ${companyId}...`);
+    const dbRow = mapToDb(table, row, companyId);
     try {
       const { error } = await supabase.from(table).upsert(dbRow);
       if (error) throw error;
@@ -114,10 +119,10 @@ export const datastore = {
     }
   },
 
-  async deleteOne(table: string, id: string): Promise<void> {
-    console.log(`[DataStore] Deleting from ${table} (id: ${id})...`);
+  async deleteOne(table: string, id: string, companyId: string): Promise<void> {
+    console.log(`[DataStore] Deleting from ${table} (id: ${id}) for company ${companyId}...`);
     try {
-      const { error } = await supabase.from(table).delete().eq('id', id);
+      const { error } = await supabase.from(table).delete().eq('id', id).eq('company_id', companyId);
       if (error) throw error;
       console.log(`[DataStore] Successfully deleted from ${table}.`);
     } catch (error) {
@@ -126,8 +131,8 @@ export const datastore = {
     }
   },
 
-  async syncFromSupabase(): Promise<AppState> {
-    console.log('[DataStore] Syncing from Supabase...');
+  async syncFromSupabase(companyId: string): Promise<AppState> {
+    console.log(`[DataStore] Syncing from Supabase for company ${companyId}...`);
     const [
       { data: banks },
       { data: paymentMethods },
@@ -136,12 +141,12 @@ export const datastore = {
       { data: postings },
       { data: xmlMappings }
     ] = await Promise.all([
-      supabase.from('banks').select('*'),
-      supabase.from('payment_methods').select('*'),
-      supabase.from('favored').select('*'),
-      supabase.from('accounts').select('*'),
-      supabase.from('postings').select('*'),
-      supabase.from('xml_item_mappings').select('*')
+      supabase.from('banks').select('*').eq('company_id', companyId),
+      supabase.from('payment_methods').select('*').eq('company_id', companyId),
+      supabase.from('favored').select('*').eq('company_id', companyId),
+      supabase.from('accounts').select('*').eq('company_id', companyId),
+      supabase.from('postings').select('*').eq('company_id', companyId),
+      supabase.from('xml_item_mappings').select('*').eq('company_id', companyId)
     ]);
 
     console.log('[DataStore] Records loaded:', {
@@ -190,15 +195,15 @@ export const datastore = {
     };
   },
 
-  async syncToSupabase(state: AppState): Promise<void> {
-    console.log('[DataStore] Syncing all to Supabase...');
+  async syncToSupabase(state: AppState, companyId: string): Promise<void> {
+    console.log(`[DataStore] Syncing all to Supabase for company ${companyId}...`);
     await Promise.all([
-      state.banks.length > 0 ? supabase.from('banks').upsert(state.banks.map(b => mapToDb('banks', b))) : Promise.resolve(),
-      state.paymentMethods.length > 0 ? supabase.from('payment_methods').upsert(state.paymentMethods.map(m => mapToDb('payment_methods', m))) : Promise.resolve(),
-      state.favored.length > 0 ? supabase.from('favored').upsert(state.favored.map(f => mapToDb('favored', f))) : Promise.resolve(),
-      state.accounts.length > 0 ? supabase.from('accounts').upsert(state.accounts.map(a => mapToDb('accounts', a))) : Promise.resolve(),
-      state.postings.length > 0 ? supabase.from('postings').upsert(state.postings.map(p => mapToDb('postings', p))) : Promise.resolve(),
-      state.xmlMappings.length > 0 ? supabase.from('xml_item_mappings').upsert(state.xmlMappings.map(m => mapToDb('xml_item_mappings', m))) : Promise.resolve()
+      state.banks.length > 0 ? supabase.from('banks').upsert(state.banks.map(b => mapToDb('banks', b, companyId))) : Promise.resolve(),
+      state.paymentMethods.length > 0 ? supabase.from('payment_methods').upsert(state.paymentMethods.map(m => mapToDb('payment_methods', m, companyId))) : Promise.resolve(),
+      state.favored.length > 0 ? supabase.from('favored').upsert(state.favored.map(f => mapToDb('favored', f, companyId))) : Promise.resolve(),
+      state.accounts.length > 0 ? supabase.from('accounts').upsert(state.accounts.map(a => mapToDb('accounts', a, companyId))) : Promise.resolve(),
+      state.postings.length > 0 ? supabase.from('postings').upsert(state.postings.map(p => mapToDb('postings', p, companyId))) : Promise.resolve(),
+      state.xmlMappings.length > 0 ? supabase.from('xml_item_mappings').upsert(state.xmlMappings.map(m => mapToDb('xml_item_mappings', m, companyId))) : Promise.resolve()
     ]);
   }
 };

@@ -14,9 +14,10 @@ import { FinancialAnalysisData } from './services/geminiService';
 import { datastore, AppState } from './data/datastore';
 import { Reconciliation } from './components/Reconciliation';
 import { supabase } from './src/lib/supabase';
+import { CompanyProvider, useActiveCompany } from './src/contexts/CompanyContext';
 
-const App: React.FC = () => {
-  const [user, setUser] = useState<User | null>(null);
+const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void }> = ({ user, onLogout }) => {
+  const { activeCompany, loading: companyLoading, error: companyError } = useActiveCompany();
   const [currentPage, setCurrentPage] = useState<'dashboard' | 'lancamentos' | 'lista' | 'contas' | 'cadastros' | 'dre' | 'analise' | 'conciliacao'>('dashboard');
   const [analysisData, setAnalysisData] = useState<{ data: FinancialAnalysisData, period: string } | null>(null);
   const [editingPosting, setEditingPosting] = useState<FinancialPosting | null>(null);
@@ -34,20 +35,12 @@ const App: React.FC = () => {
   const [xmlMappings, setXmlMappings] = useState<XmlMapping[]>([]);
 
   const initData = useCallback(async () => {
+    if (!activeCompany) return;
+    
     setLoading(true);
     setError(null);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (session?.user) {
-        setUser({
-          id: session.user.id,
-          name: session.user.user_metadata?.name || session.user.email || '',
-          email: session.user.email || '',
-        });
-      }
-
-      const state = await datastore.loadAll();
+      const state = await datastore.loadAll(activeCompany.id);
       setBanks(state.banks);
       setPaymentMethods(state.paymentMethods);
       setFavored(state.favored);
@@ -60,31 +53,20 @@ const App: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeCompany]);
 
   useEffect(() => {
-    initData();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) {
-        setUser({
-          id: session.user.id,
-          name: session.user.user_metadata?.name || session.user.email || '',
-          email: session.user.email || '',
-        });
-      } else {
-        setUser(null);
-      }
-    });
-
-    return () => subscription.unsubscribe();
-  }, [initData]);
+    if (activeCompany) {
+      initData();
+    }
+  }, [activeCompany, initData]);
 
   const handleAddBank = async (name: string) => { 
+    if (!activeCompany) return;
     setSyncing(true);
     try {
       const newBank = { id: crypto.randomUUID(), name };
-      await datastore.upsertOne('banks', newBank);
+      await datastore.upsertOne('banks', newBank, activeCompany.id);
       setBanks(prev => [...prev, newBank]); 
     } catch (err) {
       alert("Erro ao salvar no servidor. Tente novamente.");
@@ -94,9 +76,10 @@ const App: React.FC = () => {
   };
 
   const handleDeleteBank = async (id: string) => { 
+    if (!activeCompany) return;
     setSyncing(true);
     try {
-      await datastore.deleteOne('banks', id);
+      await datastore.deleteOne('banks', id, activeCompany.id);
       setBanks(prev => prev.filter(b => b.id !== id)); 
     } catch (err) {
       alert("Erro ao excluir no servidor.");
@@ -106,10 +89,11 @@ const App: React.FC = () => {
   };
 
   const handleAddMethod = async (name: string) => { 
+    if (!activeCompany) return;
     setSyncing(true);
     try {
       const newMethod = { id: crypto.randomUUID(), name };
-      await datastore.upsertOne('payment_methods', newMethod);
+      await datastore.upsertOne('payment_methods', newMethod, activeCompany.id);
       setPaymentMethods(prev => [...prev, newMethod]); 
     } catch (err) {
       alert("Erro ao salvar no servidor.");
@@ -119,9 +103,10 @@ const App: React.FC = () => {
   };
 
   const handleDeleteMethod = async (id: string) => { 
+    if (!activeCompany) return;
     setSyncing(true);
     try {
-      await datastore.deleteOne('payment_methods', id);
+      await datastore.deleteOne('payment_methods', id, activeCompany.id);
       setPaymentMethods(prev => prev.filter(m => m.id !== id)); 
     } catch (err) {
       alert("Erro ao excluir no servidor.");
@@ -131,10 +116,11 @@ const App: React.FC = () => {
   };
 
   const handleAddFavored = async (name: string) => { 
+    if (!activeCompany) return;
     setSyncing(true);
     try {
       const newFavored = { id: crypto.randomUUID(), name, type: 'AMBOS' as const };
-      await datastore.upsertOne('favored', newFavored);
+      await datastore.upsertOne('favored', newFavored, activeCompany.id);
       setFavored(prev => [...prev, newFavored]); 
     } catch (err) {
       alert("Erro ao salvar no servidor.");
@@ -144,9 +130,10 @@ const App: React.FC = () => {
   };
 
   const handleDeleteFavored = async (id: string) => { 
+    if (!activeCompany) return;
     setSyncing(true);
     try {
-      await datastore.deleteOne('favored', id);
+      await datastore.deleteOne('favored', id, activeCompany.id);
       setFavored(prev => prev.filter(f => f.id !== id)); 
     } catch (err) {
       alert("Erro ao excluir no servidor.");
@@ -156,10 +143,11 @@ const App: React.FC = () => {
   };
 
   const handleAddAccount = async (name: string, subgroupId: string, groupId: MainGroup) => { 
+    if (!activeCompany) return;
     setSyncing(true);
     try {
       const newAccount = { id: crypto.randomUUID(), name: name.toUpperCase(), subgroupId, groupId };
-      await datastore.upsertOne('accounts', newAccount);
+      await datastore.upsertOne('accounts', newAccount, activeCompany.id);
       setAccounts(prev => [...prev, newAccount]); 
     } catch (err) {
       alert("Erro ao salvar no servidor.");
@@ -169,9 +157,10 @@ const App: React.FC = () => {
   };
 
   const handleDeleteAccount = async (id: string) => { 
+    if (!activeCompany) return;
     setSyncing(true);
     try {
-      await datastore.deleteOne('accounts', id);
+      await datastore.deleteOne('accounts', id, activeCompany.id);
       setAccounts(prev => prev.filter(a => a.id !== id || a.isFixed)); 
     } catch (err) {
       alert("Erro ao excluir no servidor.");
@@ -181,6 +170,7 @@ const App: React.FC = () => {
   };
 
   const handleSavePosting = async (postingData: Omit<FinancialPosting, 'id'>) => {
+    if (!activeCompany) return;
     setSyncing(true);
     try {
       let toUpsert: FinancialPosting;
@@ -190,7 +180,7 @@ const App: React.FC = () => {
         toUpsert = { ...postingData, id: crypto.randomUUID() };
       }
       
-      await datastore.upsertOne('postings', toUpsert);
+      await datastore.upsertOne('postings', toUpsert, activeCompany.id);
       
       if (editingPosting) {
         setPostings(prev => prev.map(p => p.id === editingPosting.id ? toUpsert : p));
@@ -206,10 +196,11 @@ const App: React.FC = () => {
   };
 
   const handleSaveXmlMappings = async (newMappings: XmlMapping[]) => {
+    if (!activeCompany) return;
     setSyncing(true);
     try {
       for (const m of newMappings) {
-        await datastore.upsertOne('xml_item_mappings', m);
+        await datastore.upsertOne('xml_item_mappings', m, activeCompany.id);
       }
       setXmlMappings(prev => [...prev, ...newMappings]);
     } catch (err) {
@@ -220,11 +211,12 @@ const App: React.FC = () => {
   };
 
   const handleAddMultiplePostings = async (newPostings: Omit<FinancialPosting, 'id'>[]) => {
+    if (!activeCompany) return;
     setSyncing(true);
     try {
       const withIds = newPostings.map(p => ({ ...p, id: crypto.randomUUID() }));
       for (const p of withIds) {
-        await datastore.upsertOne('postings', p);
+        await datastore.upsertOne('postings', p, activeCompany.id);
       }
       setPostings(prev => [...withIds, ...prev]);
       alert(`${newPostings.length} lançamentos criados com sucesso!`);
@@ -241,10 +233,11 @@ const App: React.FC = () => {
   }, []);
 
   const handleDeletePosting = useCallback(async (id: string) => { 
+    if (!activeCompany) return;
     if (window.confirm("Deseja realmente excluir este lançamento?")) { 
       setSyncing(true);
       try {
-        await datastore.deleteOne('postings', id);
+        await datastore.deleteOne('postings', id, activeCompany.id);
         setPostings(prev => prev.filter(p => p.id !== id)); 
       } catch (err) {
         alert("Erro ao excluir lançamento.");
@@ -252,19 +245,7 @@ const App: React.FC = () => {
         setSyncing(false);
       }
     } 
-  }, []);
-
-  const handleLogin = (loggedUser: User) => {
-    setUser(loggedUser);
-    setCurrentPage('dashboard');
-  };
-
-  const handleLogout = async (e: React.MouseEvent) => {
-    e.preventDefault(); e.stopPropagation();
-    await supabase.auth.signOut();
-    setCurrentPage('dashboard');
-    setUser(null);
-  };
+  }, [activeCompany]);
 
   const handleShowAnalysis = (data: FinancialAnalysisData, period: string) => {
     setAnalysisData({ data, period });
@@ -288,6 +269,7 @@ const App: React.FC = () => {
   };
 
   const handleImportData = (file: File) => {
+    if (!activeCompany) return;
     const reader = new FileReader();
     reader.onload = async (e) => {
       try {
@@ -303,10 +285,10 @@ const App: React.FC = () => {
           };
           
           setSyncing(true);
-          await datastore.saveAll(newState);
+          await datastore.saveAll(newState, activeCompany.id);
           
           // Refresh UI from Supabase to be sure
-          const freshState = await datastore.loadAll();
+          const freshState = await datastore.loadAll(activeCompany.id);
           setBanks(freshState.banks);
           setPaymentMethods(freshState.paymentMethods);
           setFavored(freshState.favored);
@@ -326,9 +308,10 @@ const App: React.FC = () => {
   };
 
   const handleReloadData = async () => {
+    if (!activeCompany) return;
     setSyncing(true);
     try {
-      const state = await datastore.loadAll();
+      const state = await datastore.loadAll(activeCompany.id);
       setBanks(state.banks);
       setPaymentMethods(state.paymentMethods);
       setFavored(state.favored);
@@ -346,27 +329,28 @@ const App: React.FC = () => {
   const handleResetData = async () => {
     if (confirm("Isso apagará sua sessão. Deseja sair?")) {
       await supabase.auth.signOut();
-      setUser(null);
     }
   };
 
-  if (loading) {
+  if (companyLoading) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center gap-6">
         <div className="w-16 h-16 border-4 border-rose-500/20 border-t-rose-500 rounded-full animate-spin"></div>
-        <p className="text-slate-400 font-bold uppercase tracking-widest text-xs animate-pulse">Carregando dados do Profit Food...</p>
+        <p className="text-slate-400 font-bold uppercase tracking-widest text-xs animate-pulse">
+          Identificando Empresa...
+        </p>
       </div>
     );
   }
 
-  if (error) {
+  if (companyError || error) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-center">
         <div className="w-20 h-20 bg-rose-500/10 rounded-3xl flex items-center justify-center border border-rose-500/20 mb-6">
           <svg className="text-rose-500" xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
         </div>
         <h2 className="text-2xl font-black text-white mb-2 uppercase tracking-tight">Erro de Conexão</h2>
-        <p className="text-slate-400 max-w-md mb-8 font-medium">{error}</p>
+        <p className="text-slate-400 max-w-md mb-8 font-medium">{companyError || error}</p>
         <button 
           onClick={() => window.location.reload()}
           className="bg-rose-600 hover:bg-rose-500 text-white px-8 py-3 rounded-2xl font-black uppercase tracking-widest transition-all shadow-lg shadow-rose-600/20"
@@ -377,7 +361,26 @@ const App: React.FC = () => {
     );
   }
 
-  if (!user) return <Auth onLogin={handleLogin} />;
+  if (!activeCompany) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-center">
+        <h2 className="text-2xl font-black text-white mb-2 uppercase tracking-tight">Nenhuma Empresa Ativa</h2>
+        <p className="text-slate-400 max-w-md mb-8 font-medium">Seu usuário não está vinculado a nenhuma empresa no sistema.</p>
+        <button onClick={onLogout} className="bg-rose-600 hover:bg-rose-500 text-white px-8 py-3 rounded-2xl font-black uppercase tracking-widest transition-all shadow-lg shadow-rose-600/20">Sair</button>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center gap-6">
+        <div className="w-16 h-16 border-4 border-rose-500/20 border-t-rose-500 rounded-full animate-spin"></div>
+        <p className="text-slate-400 font-bold uppercase tracking-widest text-xs animate-pulse">
+          Carregando dados do Profit Food...
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 pb-20 selection:bg-rose-500/30">
@@ -391,9 +394,14 @@ const App: React.FC = () => {
             </div>
             <div className="flex flex-col">
               <span className="text-xl font-black text-white leading-none tracking-tight uppercase">PROFIT FOOD</span>
-              <span className="text-[9px] font-medium text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                Olá, {user.name.split(' ')[0]} {syncing && <span className="w-1.5 h-1.5 bg-rose-500 rounded-full animate-ping"></span>}
-              </span>
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-[9px] font-medium text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                  Olá, {user.name.split(' ')[0]} {syncing && <span className="w-1.5 h-1.5 bg-rose-500 rounded-full animate-ping"></span>}
+                </span>
+                <span className="text-[9px] font-black text-rose-500/80 uppercase tracking-widest bg-rose-500/5 px-2 py-0.5 rounded border border-rose-500/10">
+                  {activeCompany.name}
+                </span>
+              </div>
             </div>
           </div>
           <div className="flex items-center gap-4">
@@ -410,7 +418,7 @@ const App: React.FC = () => {
                 </button>
               ))}
             </nav>
-            <button onClick={handleLogout} className="relative z-[100] p-3 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-all cursor-pointer min-w-[50px] min-h-[50px] shadow-2xl">
+            <button onClick={onLogout} className="relative z-[100] p-3 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-all cursor-pointer min-w-[50px] min-h-[50px] shadow-2xl">
               <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
             </button>
           </div>
@@ -438,7 +446,7 @@ const App: React.FC = () => {
           />
         )}
         {currentPage === 'lista' && <PostingsList initialSearch={globalSearchFilter} postings={postings} accounts={accounts} banks={banks} paymentMethods={paymentMethods} entities={favored} onDeletePosting={handleDeletePosting} onEditPosting={handleEditPosting} />}
-        {currentPage === 'conciliacao' && <Reconciliation banks={banks} onRefresh={initData} user={user} />}
+        {currentPage === 'conciliacao' && <Reconciliation banks={banks} onRefresh={initData} />}
         {currentPage === 'contas' && <AccountRegistration subgroups={subgroups} accounts={accounts} onAddAccount={handleAddAccount} onDeleteAccount={handleDeleteAccount} />}
         {currentPage === 'cadastros' && <GeneralRegistry banks={banks} paymentMethods={paymentMethods} favored={favored} onAddBank={handleAddBank} onDeleteBank={handleDeleteBank} onAddMethod={handleAddMethod} onDeleteMethod={handleDeleteMethod} onAddFavored={handleAddFavored} onDeleteFavored={handleDeleteFavored} onExport={handleExportData} onImport={handleImportData} onReload={handleReloadData} onReset={handleResetData} />}
       </main>
@@ -446,6 +454,68 @@ const App: React.FC = () => {
         <p className="text-slate-500 text-[10px] tracking-widest font-bold uppercase">&copy; 2026 PROFIT FOOD</p>
       </footer>
     </div>
+  );
+};
+
+const App: React.FC = () => {
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const checkSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        setUser({
+          id: session.user.id,
+          name: session.user.user_metadata?.name || session.user.email || '',
+          email: session.user.email || '',
+        });
+      }
+      setLoading(false);
+    };
+
+    checkSession();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        setUser({
+          id: session.user.id,
+          name: session.user.user_metadata?.name || session.user.email || '',
+          email: session.user.email || '',
+        });
+      } else {
+        setUser(null);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const handleLogin = (loggedUser: User) => {
+    setUser(loggedUser);
+  };
+
+  const handleLogout = async (e: React.MouseEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    await supabase.auth.signOut();
+    setUser(null);
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center gap-6">
+        <div className="w-16 h-16 border-4 border-rose-500/20 border-t-rose-500 rounded-full animate-spin"></div>
+        <p className="text-slate-400 font-bold uppercase tracking-widest text-xs animate-pulse">Iniciando Profit Food...</p>
+      </div>
+    );
+  }
+
+  if (!user) return <Auth onLogin={handleLogin} />;
+
+  return (
+    <CompanyProvider user={user}>
+      <AppContent user={user} onLogout={handleLogout} />
+    </CompanyProvider>
   );
 };
 

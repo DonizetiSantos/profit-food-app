@@ -17,6 +17,20 @@ export interface User {
   password?: string;
 }
 
+export interface Company {
+  id: string;
+  name: string;
+  document?: string;
+  created_at?: string;
+}
+
+export interface CompanyUser {
+  id: string;
+  company_id: string;
+  user_id: string;
+  role: string;
+}
+
 export interface Category {
   id: string;
   name: string;

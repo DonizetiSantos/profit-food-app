@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Account, Bank, PaymentMethod, Entity, FinancialPosting, MainGroup, XmlItem, XmlMapping } from '../types';
 import { parseNfeXml, normalizeProductName, NfeData } from '../services/xmlParser';
 import { favoredService } from '../services/favoredService';
+import { useActiveCompany } from '../src/contexts/CompanyContext';
 
 interface Props {
   isOpen: boolean;
@@ -20,6 +21,7 @@ interface Props {
 export const XmlImportModal: React.FC<Props> = ({
   isOpen, onClose, accounts, banks, paymentMethods, entities, xmlMappings, onSaveMappings, onAddPostings, onAddEntity
 }) => {
+  const { activeCompany } = useActiveCompany();
   const [file, setFile] = useState<File | null>(null);
   const [nfeData, setNfeData] = useState<NfeData | null>(null);
   const [itemMappings, setItemMappings] = useState<Record<number, string>>({});
@@ -106,8 +108,8 @@ export const XmlImportModal: React.FC<Props> = ({
       let entityId = '';
       
       // Try by CNPJ first
-      if (nfeData.supplierCnpj && nfeData.supplierCnpj.replace(/\D/g, "").length === 14) {
-        const favored = await favoredService.getOrCreateFavoredByCnpj(nfeData.supplierCnpj, nfeData.supplierName);
+      if (nfeData.supplierCnpj && nfeData.supplierCnpj.replace(/\D/g, "").length === 14 && activeCompany) {
+        const favored = await favoredService.getOrCreateFavoredByCnpj(nfeData.supplierCnpj, nfeData.supplierName, activeCompany.id);
         if (favored) {
           entityId = favored.id;
           // If it's a new one, we should notify the parent to update the list

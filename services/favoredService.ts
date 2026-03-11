@@ -2,7 +2,7 @@ import { supabase } from '../src/lib/supabase';
 import { Entity } from '../types';
 
 export const favoredService = {
-  async getOrCreateFavoredByCnpj(cnpj: string, name: string): Promise<Entity | null> {
+  async getOrCreateFavoredByCnpj(cnpj: string, name: string, companyId: string): Promise<Entity | null> {
     const cleaned = cnpj.replace(/\D/g, "");
     if (cleaned.length !== 14) return null;
 
@@ -11,6 +11,7 @@ export const favoredService = {
       const { data: existing, error: selErr } = await supabase
         .from("favored")
         .select("id, name, type, document")
+        .eq("company_id", companyId)
         .eq("document", cleaned)
         .maybeSingle();
 
@@ -29,6 +30,7 @@ export const favoredService = {
         .from("favored")
         .insert({ 
           id: crypto.randomUUID(),
+          company_id: companyId,
           name: name.toUpperCase(), 
           document: cleaned, 
           type: "AMBOS" 
