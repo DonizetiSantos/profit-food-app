@@ -219,6 +219,7 @@ export const ofxImportService = {
       .select('entity_id')
       .eq('bank_id', bankTx.bank_id)
       .eq('payee_key', bankTx.description)
+      .eq('company_id', companyId)
       .maybeSingle();
 
     // Text normalization helper

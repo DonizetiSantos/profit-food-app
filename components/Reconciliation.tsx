@@ -220,7 +220,8 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
           liquidation_date: bankTx.posted_date,
           amount: actualAmount // Update to the real value paid/received
         })
-        .eq('id', posting.id);
+        .eq('id', posting.id)
+        .eq('company_id', activeCompany.id);
       
       if (updateError) {
         console.error("[Reconciliation] Error updating posting:", updateError);
