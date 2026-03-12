@@ -2,6 +2,7 @@ import { supabase } from '../src/lib/supabase';
 import { sha256 } from './hash';
 import { parseSaiposXlsx, SaiposVendaRow } from './saiposParser';
 import { FinancialPosting, MainGroup } from '../types';
+import { accountService } from './accountService';
 
 export interface PdvMapping {
   id?: string;
@@ -39,50 +40,14 @@ export const saiposImportService = {
   },
 
   async getVendasGeraisAccount(companyId: string): Promise<string> {
-    // 1. Look for existing "Vendas Gerais"
-    const { data: existing, error } = await supabase
-      .from('accounts')
-      .select('id')
-      .eq('company_id', companyId)
-      .eq('name', 'VENDAS GERAIS')
-      .eq('group_id', 'RECEITAS')
-      .maybeSingle();
-
-    if (error) throw error;
-    if (existing) return existing.id;
-
-    // 2. Create if not exists
-    const id = crypto.randomUUID();
-    const { error: insError } = await supabase
-      .from('accounts')
-      .insert({
-        id,
-        company_id: companyId,
-        name: 'VENDAS GERAIS',
-        subgroup_id: 's-entradas-op',
-        group_id: 'RECEITAS',
-        is_fixed: true
-      });
-
-    if (insError) {
-      // If subgroup doesn't exist, we might need to find a valid one
-      const { data: subgroups } = await supabase.from('accounts')
-        .select('subgroup_id')
-        .eq('company_id', companyId)
-        .eq('group_id', 'RECEITAS')
-        .limit(1);
-      const subId = subgroups?.[0]?.subgroup_id || 'RECEITAS';
-      
-      await supabase.from('accounts').insert({
-        id,
-        company_id: companyId,
-        name: 'VENDAS GERAIS',
-        subgroup_id: subId,
-        group_id: 'RECEITAS',
-        is_fixed: true
-      });
-    }
-
+    const id = await accountService.resolveAccountByName(
+      companyId, 
+      'VENDAS GERAIS', 
+      MainGroup.RECEITAS,
+      { createIfMissing: true, defaultSubgroupId: 's-entradas-op' }
+    );
+    
+    if (!id) throw new Error('Não foi possível resolver a conta de Vendas Gerais.');
     return id;
   },
 

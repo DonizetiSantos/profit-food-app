@@ -93,6 +93,16 @@ export const Auth: React.FC<Props> = ({ onLogin }) => {
           throw new Error('Usuário e empresa criados, mas erro ao vincular. Contate o suporte.');
         }
 
+        // 4. Initialize company data using SQL function
+        const { error: initError } = await supabase.rpc('initialize_company_data', {
+          target_company_id: companyId
+        });
+
+        if (initError) {
+          console.error('Error initializing company data:', initError);
+          throw new Error('Empresa criada, mas erro ao inicializar dados padrão. Contate o suporte.');
+        }
+
         if (authData.user) {
           onLogin({
             id: authData.user.id,

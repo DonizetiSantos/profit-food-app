@@ -30,7 +30,7 @@ const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void
   const [banks, setBanks] = useState<Bank[]>([]);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [favored, setFavored] = useState<Entity[]>([]);
-  const [accounts, setAccounts] = useState<Account[]>(INITIAL_ACCOUNTS);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [postings, setPostings] = useState<FinancialPosting[]>([]);
   const [xmlMappings, setXmlMappings] = useState<XmlMapping[]>([]);
 
@@ -44,7 +44,7 @@ const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void
       setBanks(state.banks);
       setPaymentMethods(state.paymentMethods);
       setFavored(state.favored);
-      setAccounts(state.accounts.length > 0 ? state.accounts : INITIAL_ACCOUNTS);
+      setAccounts(state.accounts);
       setPostings(state.postings);
       setXmlMappings(state.xmlMappings);
     } catch (err: any) {
@@ -315,7 +315,7 @@ const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void
       setBanks(state.banks);
       setPaymentMethods(state.paymentMethods);
       setFavored(state.favored);
-      setAccounts(state.accounts.length > 0 ? state.accounts : INITIAL_ACCOUNTS);
+      setAccounts(state.accounts);
       setPostings(state.postings);
       setXmlMappings(state.xmlMappings);
       alert("Dados recarregados do servidor!");
