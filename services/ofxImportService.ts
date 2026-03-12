@@ -200,7 +200,8 @@ export const ofxImportService = {
         favored (id, name)
       `)
       .eq('company_id', companyId)
-      .eq('status', 'PROVISIONADO')
+      .neq('status', 'LIQUIDADO')
+      .is('liquidation_date', null)
       .not('accounts.name', 'ilike', 'VENDAS GERAIS') // Exclude Vendas Gerais
       .gte('occurrence_date', startDate.toISOString().split('T')[0])
       .lte('occurrence_date', endDate.toISOString().split('T')[0])
@@ -312,14 +313,15 @@ export const ofxImportService = {
         favored (id, name)
       `)
       .eq('company_id', companyId)
-      .eq('status', 'PROVISIONADO')
+      .neq('status', 'LIQUIDADO')
+      .is('liquidation_date', null)
       .not('accounts.name', 'ilike', 'VENDAS GERAIS')
       .order('occurrence_date', { ascending: false });
 
     if (filters.startDate) query = query.gte('occurrence_date', filters.startDate);
     if (filters.endDate) query = query.lte('occurrence_date', filters.endDate);
     if (filters.minAmount !== undefined) query = query.gte('amount', filters.minAmount);
-    if (filters.maxAmount !== undefined) query = query.gte('amount', filters.maxAmount);
+    if (filters.maxAmount !== undefined) query = query.lte('amount', filters.maxAmount);
 
     const { data, error } = await query;
     if (error) throw error;
