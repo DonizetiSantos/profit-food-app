@@ -4,6 +4,8 @@ import { Account, Bank, PaymentMethod, Entity, FinancialPosting, MainGroup, XmlI
 import { parseNfeXml, normalizeProductName, NfeData } from '../services/xmlParser';
 import { favoredService } from '../services/favoredService';
 import { useActiveCompany } from '../src/contexts/CompanyContext';
+import { sha256 } from '../services/hash';
+import { xmlImportService } from '../services/xmlImportService';
 
 interface Props {
   isOpen: boolean;
@@ -23,6 +25,7 @@ export const XmlImportModal: React.FC<Props> = ({
 }) => {
   const { activeCompany } = useActiveCompany();
   const [file, setFile] = useState<File | null>(null);
+  const [fileHash, setFileHash] = useState('');
   const [nfeData, setNfeData] = useState<NfeData | null>(null);
   const [itemMappings, setItemMappings] = useState<Record<number, string>>({});
   const [saveNewMappings, setSaveNewMappings] = useState<Record<number, boolean>>({});
@@ -78,7 +81,19 @@ export const XmlImportModal: React.FC<Props> = ({
     if (selectedFile) {
       const text = await selectedFile.text();
       try {
+        const hash = await sha256(text);
         const data = parseNfeXml(text);
+        
+        if (activeCompany) {
+          const isDuplicate = await xmlImportService.checkDuplicate(activeCompany.id, data.nfeKey, hash);
+          if (isDuplicate) {
+            alert("Este XML já foi importado anteriormente.");
+            reset();
+            return;
+          }
+        }
+
+        setFileHash(hash);
         setNfeData(data);
         setFile(selectedFile);
       } catch (err) {
@@ -192,9 +207,34 @@ export const XmlImportModal: React.FC<Props> = ({
       }));
 
       onAddPostings(postings);
+      
+      // 4. Log successful import
+      if (activeCompany && nfeData) {
+        await xmlImportService.logImport({
+          company_id: activeCompany.id,
+          file_hash: fileHash,
+          file_name: file?.name || 'unknown',
+          supplier_cnpj: nfeData.supplierCnpj,
+          invoice_key: nfeData.nfeKey,
+          status: 'imported'
+        });
+      }
+
       onClose();
       reset();
-    } catch (err) {
+    } catch (err: any) {
+      // Log error
+      if (activeCompany && nfeData) {
+        await xmlImportService.logImport({
+          company_id: activeCompany.id,
+          file_hash: fileHash,
+          file_name: file?.name || 'unknown',
+          supplier_cnpj: nfeData.supplierCnpj,
+          invoice_key: nfeData.nfeKey,
+          status: 'error',
+          error_message: err.message || String(err)
+        });
+      }
       alert("Erro ao processar importação.");
     } finally {
       setIsProcessing(false);
@@ -203,6 +243,7 @@ export const XmlImportModal: React.FC<Props> = ({
 
   const reset = () => {
     setFile(null);
+    setFileHash('');
     setNfeData(null);
     setItemMappings({});
     setSaveNewMappings({});
