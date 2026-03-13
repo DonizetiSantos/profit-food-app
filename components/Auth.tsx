@@ -133,6 +133,17 @@ export const Auth: React.FC<Props> = ({ onLogin }) => {
             <p className="text-slate-500 font-medium uppercase tracking-[0.28em] text-[9px] sm:text-[10px] mt-1.5">
               Inteligência Financeira
             </p>
+
+            <div className="mt-4 sm:mt-5 space-y-2">
+              <p className="text-white text-sm sm:text-base font-bold leading-snug max-w-sm mx-auto">
+                Controle custos, aumente margens e tenha lucro previsível.
+              </p>
+              <div className="flex flex-col items-center gap-1 text-slate-400 text-xs sm:text-sm font-medium">
+                <span>• Controle de custos</span>
+                <span>• Visão real do lucro</span>
+                <span>• Previsibilidade financeira</span>
+              </div>
+            </div>
           </div>
 
           <div className="bg-slate-900/50 backdrop-blur-xl p-4 sm:p-6 rounded-[1.75rem] border border-slate-800 shadow-2xl">
