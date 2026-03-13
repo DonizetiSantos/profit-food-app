@@ -155,3 +155,20 @@ export interface OfxImport {
   status: 'IMPORTED' | 'PARTIAL' | 'ERROR';
   errorMessage?: string;
 }
+
+export interface PaymentSettlementRule {
+  id: string;
+  company_id: string;
+  payment_method_id: string;
+  settlement_days: number;
+  receives_same_day: boolean;
+  default_status: 'LIQUIDADO' | 'PROVISIONADO';
+  fee_percent: number;
+  fee_fixed: number;
+  default_bank_id?: string;
+  notes?: string;
+  is_active: boolean;
+  payment_methods?: {
+    name: string;
+  };
+}

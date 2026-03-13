@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Bank, User } from '../types';
 import { ofxImportService } from '../services/ofxImportService';
+import { settlementService } from '../services/settlementService';
 import { supabase } from '../src/lib/supabase';
 import { useActiveCompany } from '../src/contexts/CompanyContext';
 
@@ -131,25 +132,58 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
       const results = await ofxImportService.getReconciliationCandidates(transaction, activeCompany.id);
       setCandidates(results);
       
-      // Auto-select if score >= 90
+      // Auto-select if confidence is high
       const bestMatch = results[0];
-      if (bestMatch && bestMatch.match_score >= 90) {
+      if (bestMatch && bestMatch.confidence_level === 'high') {
         setSelectedPostingId(bestMatch.id);
         
-        // Auto-liquidate if score >= 95 and has mapping
-        if (bestMatch.match_score >= 95 && bestMatch.has_mapping) {
-          console.log("Auto-matching detected for", transaction.id, "Score:", bestMatch.match_score);
-          if (window.confirm(`Conciliação automática sugerida (Score: ${bestMatch.match_score}%). Confirmar vínculo com ${bestMatch.favored?.name}?`)) {
-            await performReconciliation(transaction, bestMatch, 'AUTO');
-            return;
-          }
-        }
+        // Auto-liquidate if requested (user said "para alta confiança executar automaticamente")
+        // But usually in UI we might want a confirmation if it's the manual click.
+        // However, the prompt says "auto-conciliação apenas quando a confiança for alta".
+        // I'll implement a separate "Conciliar Tudo" button for the bulk action.
       }
     } catch (err) {
       console.error("Erro ao buscar candidatos:", err);
       alert("Erro ao buscar lançamentos para conciliação.");
     } finally {
       setLoadingCandidates(false);
+    }
+  };
+
+  const runAutoReconciliation = async () => {
+    if (!activeCompany || reconciling) return;
+    
+    const pendingTransactions = transactions.filter(t => !t.isReconciled);
+    if (pendingTransactions.length === 0) {
+      alert("Nenhuma transação pendente para conciliar.");
+      return;
+    }
+
+    if (!window.confirm(`Deseja executar a conciliação automática para ${pendingTransactions.length} transações pendentes? Apenas matches de ALTA CONFIANÇA serão processados.`)) {
+      return;
+    }
+
+    setReconciling(true);
+    let count = 0;
+
+    try {
+      for (const tx of pendingTransactions) {
+        const candidates = await ofxImportService.getReconciliationCandidates(tx, activeCompany.id);
+        const bestMatch = candidates[0];
+
+        if (bestMatch && bestMatch.confidence_level === 'high') {
+          await performReconciliation(tx, bestMatch, 'AUTO');
+          count++;
+        }
+      }
+      
+      alert(`Conciliação automática concluída! ${count} transações foram conciliadas com sucesso.`);
+      await loadTransactions();
+    } catch (err: any) {
+      console.error("Erro na conciliação automática:", err);
+      alert("Ocorreu um erro durante a conciliação automática: " + err.message);
+    } finally {
+      setReconciling(false);
     }
   };
 
@@ -181,51 +215,148 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
     try {
       const actualAmount = Math.abs(bankTx.amount);
 
-      // (A) Insert reconciliation record
-      const { error: recError } = await supabase
+      // (0) Check if bank transaction is already reconciled to avoid duplicates
+      const { data: existingRec } = await supabase
         .from('reconciliations')
-        .insert({
-          company_id: activeCompany.id,
-          bank_transaction_id: bankTx.id,
-          posting_id: posting.id,
-          match_type: type,
-          match_score: posting.match_score || 0,
-          notes: bankTx.description,
-          reconciled_by: user?.id || null,
-          matched_amount: actualAmount
-        });
+        .select('id')
+        .eq('bank_transaction_id', bankTx.id)
+        .eq('company_id', activeCompany.id)
+        .maybeSingle();
 
-      if (recError) {
-        console.error("[Reconciliation] Error inserting reconciliation:", recError);
-        // Fallback if columns are missing in some environments
-        const { error: retryError } = await supabase
+      if (existingRec) {
+        alert("Esta transação já foi conciliada.");
+        setSelectedTransaction(null);
+        setSelectedPostingId('');
+        loadTransactions();
+        return;
+      }
+
+      // (A) Check if it's a provisioned revenue from card/voucher
+      // We check group RECEITAS, status PROVISIONADO and account VENDAS GERAIS
+      const isProvisionedRevenue = posting.group === 'RECEITAS' && 
+                                   posting.status === 'PROVISIONADO' &&
+                                   posting.accounts?.name?.toUpperCase() === 'VENDAS GERAIS' &&
+                                   posting.payment_method_id;
+
+      if (isProvisionedRevenue) {
+        // NEW LOGIC: Create a new posting for the receipt and keep original economic posting intact
+        const receiptAccountId = await settlementService.resolveReceiptAccountByPaymentMethod(activeCompany.id, posting.payment_method_id);
+        
+        if (!receiptAccountId) {
+          throw new Error(`Conta de recebimento não encontrada para o meio de pagamento do lançamento.`);
+        }
+
+        const newPostingId = crypto.randomUUID();
+        
+        // 1. Create the receipt posting (Financial Fact)
+        const { error: newPostError } = await supabase
+          .from('postings')
+          .insert({
+            id: newPostingId,
+            company_id: activeCompany.id,
+            status: 'LIQUIDADO',
+            group: 'RECEITAS',
+            account_id: receiptAccountId,
+            amount: actualAmount,
+            competence_date: bankTx.posted_date,
+            occurrence_date: bankTx.posted_date,
+            due_date: bankTx.posted_date,
+            liquidation_date: bankTx.posted_date,
+            bank_id: bankTx.bank_id,
+            entity_id: posting.entity_id || null,
+            payment_method_id: posting.payment_method_id,
+            observations: `Recebimento conciliado via OFX - Ref: ${posting.observations || 'Venda PDV'}`
+          });
+
+        if (newPostError) throw newPostError;
+
+        // 2. Insert reconciliation record linking to the NEW posting
+        const { error: recError } = await supabase
+          .from('reconciliations')
+          .insert({
+            company_id: activeCompany.id,
+            bank_transaction_id: bankTx.id,
+            posting_id: newPostingId,
+            match_type: type,
+            match_score: posting.match_score || 0,
+            notes: `Recebimento de cartão conciliado: ${bankTx.description}`,
+            reconciled_by: user?.id || null,
+            matched_amount: actualAmount
+          });
+
+        if (recError) {
+          console.error("[Reconciliation] Error inserting reconciliation (provisioned):", recError);
+          // Fallback if some columns are missing
+          const { error: retryError } = await supabase
+            .from('reconciliations')
+            .insert({
+              company_id: activeCompany.id,
+              bank_transaction_id: bankTx.id,
+              posting_id: newPostingId,
+              match_type: type,
+              notes: `Recebimento de cartão conciliado: ${bankTx.description} (Valor: ${actualAmount})`
+            });
+          if (retryError) throw retryError;
+        }
+
+        // 3. Update original posting with a note, but KEEP IT PROVISIONADO and KEEP AMOUNT (Economic Fact)
+        const { error: updateError } = await supabase
+          .from('postings')
+          .update({
+            observations: (posting.observations || '') + ` [Conciliado OFX em ${bankTx.posted_date}]`
+          })
+          .eq('id', posting.id)
+          .eq('company_id', activeCompany.id);
+
+        if (updateError) throw updateError;
+
+      } else {
+        // OLD LOGIC (for expenses and other revenues)
+        // (A) Insert reconciliation record
+        const { error: recError } = await supabase
           .from('reconciliations')
           .insert({
             company_id: activeCompany.id,
             bank_transaction_id: bankTx.id,
             posting_id: posting.id,
             match_type: type,
-            notes: `${bankTx.description} (Valor real: ${actualAmount})`
+            match_score: posting.match_score || 0,
+            notes: bankTx.description,
+            reconciled_by: user?.id || null,
+            matched_amount: actualAmount
           });
-        if (retryError) throw retryError;
-      }
 
-      // (B) Update posting: Status, Bank, Liquidation Date AND Amount
-      // We update the amount to match the bank statement exactly as requested
-      const { error: updateError } = await supabase
-        .from('postings')
-        .update({
-          status: 'LIQUIDADO',
-          bank_id: bankTx.bank_id,
-          liquidation_date: bankTx.posted_date,
-          amount: actualAmount // Update to the real value paid/received
-        })
-        .eq('id', posting.id)
-        .eq('company_id', activeCompany.id);
-      
-      if (updateError) {
-        console.error("[Reconciliation] Error updating posting:", updateError);
-        throw updateError;
+        if (recError) {
+          console.error("[Reconciliation] Error inserting reconciliation:", recError);
+          // Fallback if columns are missing in some environments
+          const { error: retryError } = await supabase
+            .from('reconciliations')
+            .insert({
+              company_id: activeCompany.id,
+              bank_transaction_id: bankTx.id,
+              posting_id: posting.id,
+              match_type: type,
+              notes: `${bankTx.description} (Valor real: ${actualAmount})`
+            });
+          if (retryError) throw retryError;
+        }
+
+        // (B) Update posting: Status, Bank, Liquidation Date AND Amount
+        const { error: updateError } = await supabase
+          .from('postings')
+          .update({
+            status: 'LIQUIDADO',
+            bank_id: bankTx.bank_id,
+            liquidation_date: bankTx.posted_date,
+            amount: actualAmount // Update to the real value paid/received
+          })
+          .eq('id', posting.id)
+          .eq('company_id', activeCompany.id);
+        
+        if (updateError) {
+          console.error("[Reconciliation] Error updating posting:", updateError);
+          throw updateError;
+        }
       }
 
       // (C) Save learned mapping for future auto-reconciliations
@@ -234,7 +365,7 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
       }
 
       console.log("[Reconciliation] Success!");
-      if (type === 'MANUAL') alert("Conciliação realizada com sucesso! O valor do lançamento foi ajustado para o valor do extrato.");
+      if (type === 'MANUAL') alert("Conciliação realizada com sucesso!");
       
       setSelectedTransaction(null);
       setSelectedPostingId('');
@@ -320,6 +451,15 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
               {importing ? 'Processando...' : 'Importar OFX'}
+            </button>
+
+            <button 
+              onClick={runAutoReconciliation}
+              disabled={reconciling || transactions.length === 0}
+              className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg ${reconciling || transactions.length === 0 ? 'bg-slate-800 text-slate-600 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></svg>
+              {reconciling ? 'Conciliando...' : 'Conciliar Automático'}
             </button>
           </div>
         </div>
@@ -600,9 +740,29 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
                               <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-widest ${c.status === 'LIQUIDADO' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-amber-500/10 text-amber-500'}`}>
                                 {c.status}
                               </span>
-                              {c.match_score >= 90 && (
-                                <span className="text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-widest bg-rose-500/20 text-rose-500 animate-pulse">
-                                  Sugestão Forte
+                              {c.confidence_level === 'high' && (
+                                <span className="text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-widest bg-emerald-500/20 text-emerald-500">
+                                  Confiança Alta
+                                </span>
+                              )}
+                              {c.confidence_level === 'medium' && (
+                                <span className="text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-widest bg-amber-500/20 text-amber-500">
+                                  Confiança Média
+                                </span>
+                              )}
+                              {c.confidence_level === 'low' && (
+                                <span className="text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-widest bg-slate-800 text-slate-500">
+                                  Confiança Baixa
+                                </span>
+                              )}
+                              {c.reconciliation_mode === 'card_receivable' && (
+                                <span className="text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-widest bg-indigo-500/20 text-indigo-400">
+                                  Cartão/Voucher
+                                </span>
+                              )}
+                              {c.reconciliation_mode === 'instant_receipt' && (
+                                <span className="text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-widest bg-sky-500/20 text-sky-400">
+                                  PIX/Imediato
                                 </span>
                               )}
                             </div>
@@ -612,7 +772,7 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
                               <span>{c.accounts?.name}</span>
                               <span className="w-1 h-1 bg-slate-800 rounded-full"></span>
                               <span className={c.difference === 0 ? 'text-emerald-500' : 'text-amber-500'}>
-                                Dif: R$ {c.difference.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                Líquido: R$ {c.expected_amount?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                               </span>
                               <span className="w-1 h-1 bg-slate-800 rounded-full"></span>
                               <span>{c.days_diff} dias</span>

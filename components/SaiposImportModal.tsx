@@ -55,7 +55,7 @@ export const SaiposImportModal: React.FC<Props> = ({ isOpen, onClose, banks, pay
     try {
       const caixaEmpresa = banks.find(b => b.name.toUpperCase().includes('CAIXA EMPRESA'))?.id;
       
-      await saiposImportService.executeImport(
+      const result = await saiposImportService.executeImport(
         fileHash,
         file.name,
         previewItems,
@@ -65,7 +65,11 @@ export const SaiposImportModal: React.FC<Props> = ({ isOpen, onClose, banks, pay
         caixaEmpresa
       );
 
-      alert('Importação concluída com sucesso!');
+      if (result.warnings.length > 0) {
+        alert('Importação concluída com avisos:\n' + result.warnings.join('\n'));
+      } else {
+        alert('Importação concluída com sucesso!');
+      }
       onSuccess();
       onClose();
       reset();

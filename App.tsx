@@ -13,12 +13,13 @@ import { FinancialAnalysis } from './components/FinancialAnalysis';
 import { FinancialAnalysisData } from './services/geminiService';
 import { datastore, AppState } from './data/datastore';
 import { Reconciliation } from './components/Reconciliation';
+import { FinancialAssumptions } from './components/FinancialAssumptions';
 import { supabase } from './src/lib/supabase';
 import { CompanyProvider, useActiveCompany } from './src/contexts/CompanyContext';
 
 const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void }> = ({ user, onLogout }) => {
   const { activeCompany, loading: companyLoading, error: companyError } = useActiveCompany();
-  const [currentPage, setCurrentPage] = useState<'dashboard' | 'lancamentos' | 'lista' | 'contas' | 'cadastros' | 'dre' | 'analise' | 'conciliacao'>('dashboard');
+  const [currentPage, setCurrentPage] = useState<'dashboard' | 'lancamentos' | 'lista' | 'contas' | 'cadastros' | 'dre' | 'analise' | 'conciliacao' | 'configuracoes'>('dashboard');
   const [analysisData, setAnalysisData] = useState<{ data: FinancialAnalysisData, period: string } | null>(null);
   const [editingPosting, setEditingPosting] = useState<FinancialPosting | null>(null);
   const [globalSearchFilter, setGlobalSearchFilter] = useState('');
@@ -408,7 +409,7 @@ const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void
           </div>
           <div className="flex items-center gap-4">
             <nav className="flex bg-slate-950/50 p-1 rounded-2xl border border-slate-800 overflow-x-auto no-scrollbar">
-              {['dashboard', 'dre', 'lancamentos', 'lista', 'conciliacao', 'contas', 'cadastros'].map(id => (
+              {['dashboard', 'dre', 'lancamentos', 'lista', 'conciliacao', 'contas', 'cadastros', 'configuracoes'].map(id => (
                 <button 
                   key={id} type="button" onClick={() => {
                     if (id === 'lista') setGlobalSearchFilter('');
@@ -416,7 +417,7 @@ const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void
                   }} 
                   className={`px-4 py-2 rounded-xl text-xs font-bold uppercase transition-all ${currentPage === id ? 'bg-slate-800 text-rose-500 shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}
                 >
-                  {id === 'contas' ? 'Plano' : id === 'lista' ? 'Registros' : id === 'conciliacao' ? 'Conciliação' : id}
+                  {id === 'contas' ? 'Plano' : id === 'lista' ? 'Registros' : id === 'conciliacao' ? 'Conciliação' : id === 'configuracoes' ? 'Configurações' : id === 'lancamentos' ? 'Lançamentos' : id}
                 </button>
               ))}
             </nav>
@@ -451,6 +452,7 @@ const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void
         {currentPage === 'conciliacao' && <Reconciliation banks={banks} onRefresh={initData} />}
         {currentPage === 'contas' && <AccountRegistration subgroups={subgroups} accounts={accounts} onAddAccount={handleAddAccount} onDeleteAccount={handleDeleteAccount} />}
         {currentPage === 'cadastros' && <GeneralRegistry banks={banks} paymentMethods={paymentMethods} favored={favored} onAddBank={handleAddBank} onDeleteBank={handleDeleteBank} onAddMethod={handleAddMethod} onDeleteMethod={handleDeleteMethod} onAddFavored={handleAddFavored} onDeleteFavored={handleDeleteFavored} onExport={handleExportData} onImport={handleImportData} onReload={handleReloadData} onReset={handleResetData} />}
+        {currentPage === 'configuracoes' && <FinancialAssumptions banks={banks} />}
       </main>
       <footer className="fixed bottom-0 left-0 right-0 bg-slate-900/90 backdrop-blur-md border-t border-slate-800 py-3 text-center flex flex-col items-center justify-center gap-1">
         <p className="text-slate-500 text-[10px] tracking-widest font-bold uppercase">&copy; 2026 PROFIT FOOD</p>

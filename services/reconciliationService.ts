@@ -153,6 +153,10 @@ export const reconciliationService = {
     if (recError) throw recError;
 
     // 2. Se estiver PROVISIONADO, atualizar para LIQUIDADO
+    // Nota: Esta função não implementa a lógica especial de Recebimento de Cartão
+    // pois ela é simplificada. A lógica completa está no componente Reconciliation.tsx.
+    // Para manter a consistência, poderíamos implementar aqui também, mas como não é usada,
+    // vamos apenas manter o comportamento básico ou lançar um aviso.
     if (posting.status === 'PROVISIONADO') {
       const { error: postError } = await supabase
         .from('postings')

@@ -202,7 +202,6 @@ export const ofxImportService = {
       .eq('company_id', companyId)
       .neq('status', 'LIQUIDADO')
       .is('liquidation_date', null)
-      .not('accounts.name', 'ilike', 'VENDAS GERAIS') // Exclude Vendas Gerais
       .gte('occurrence_date', startDate.toISOString().split('T')[0])
       .lte('occurrence_date', endDate.toISOString().split('T')[0])
       .gte('amount', minAmount)
@@ -211,8 +210,17 @@ export const ofxImportService = {
 
     if (error) throw error;
 
-    // Filter out null accounts (which happens if the .not filter on join table doesn't work as expected in some Supabase versions)
-    const filteredData = data.filter(p => p.accounts && p.accounts.name.toUpperCase() !== 'VENDAS GERAIS');
+    // Filter logic:
+    // 1. If it's NOT Vendas Gerais, it's always a candidate (current logic)
+    // 2. If it IS Vendas Gerais, it's only a candidate if the bank transaction is positive (entry)
+    //    and the posting is a revenue (group RECEITAS) and is provisioned.
+    const filteredData = data.filter(p => {
+      const isVendasGerais = p.accounts?.name?.toUpperCase() === 'VENDAS GERAIS';
+      if (!isVendasGerais) return true;
+      
+      // Vendas Gerais special rule
+      return bankTx.amount > 0 && p.group === 'RECEITAS' && p.status === 'PROVISIONADO';
+    });
 
     // Fetch payee mapping for this bank and description
     const { data: mapping } = await supabase
@@ -236,59 +244,134 @@ export const ofxImportService = {
 
     const bankWords = normalize(bankTx.description);
 
-    // Scoring logic
+    // Fetch all settlement rules for this company to calculate net amounts for Mode C
+    const { data: settlementRules } = await supabase
+      .from('payment_settlement_rules')
+      .select('*')
+      .eq('company_id', companyId)
+      .eq('is_active', true);
+
+    // Scoring and Confidence logic
     const candidates = filteredData.map(p => {
       let score = 0;
       let reasons: string[] = [];
+      let mode: 'expense' | 'instant_receipt' | 'card_receivable' | 'assisted' = 'assisted';
+      let confidenceLevel: 'high' | 'medium' | 'low' = 'low';
+      let expectedAmount = p.amount;
+
+      const isVendasGerais = p.accounts?.name?.toUpperCase() === 'VENDAS GERAIS';
+      const isRevenue = p.group === 'RECEITAS';
+      const isExpense = p.group === 'DESPESAS';
       
-      // 1. Value (up to 60 points)
-      const diff = Math.abs(p.amount - absAmount);
+      // Determine Mode
+      if (isVendasGerais && isRevenue && p.payment_method_id) {
+        mode = 'card_receivable';
+        // Calculate expected net amount if we have a rule
+        const rule = settlementRules?.find(r => r.payment_method_id === p.payment_method_id);
+        if (rule) {
+          const feePercent = rule.fee_percent || 0;
+          const feeFixed = rule.fee_fixed || 0;
+          const feeAmount = Number((p.amount * (feePercent / 100) + feeFixed).toFixed(2));
+          expectedAmount = Number((p.amount - feeAmount).toFixed(2));
+        }
+      } else if (isRevenue) {
+        // Check if it's PIX or receives same day
+        const isPix = normalize(p.observations).includes('pix') || normalize(bankTx.description).includes('pix');
+        if (isPix) {
+          mode = 'instant_receipt';
+        } else {
+          mode = 'assisted';
+        }
+      } else if (isExpense) {
+        mode = 'expense';
+      }
+
+      // 1. Value Score (up to 50 points)
+      const diff = Math.abs(expectedAmount - absAmount);
       if (diff === 0) {
-        score += 60;
+        score += 50;
         reasons.push("Valor exato");
+      } else if (diff <= 1.00) {
+        score += 45;
+        reasons.push("Valor muito próximo (diff ≤ 1,00)");
+      } else if (diff <= 3.00) {
+        score += 35;
+        reasons.push("Valor próximo (diff ≤ 3,00)");
       } else {
-        const valScore = Math.max(0, 60 * (1 - diff / tolerance));
+        const valScore = Math.max(0, 50 * (1 - diff / tolerance));
         score += valScore;
-        if (valScore > 40) reasons.push("Valor muito próximo");
-        else reasons.push("Valor aproximado");
+        if (valScore > 30) reasons.push("Valor aproximado");
       }
 
-      // 2. Date proximity (up to 25 points)
-      const pDate = new Date(p.occurrence_date);
-      const daysDiff = Math.abs((pDate.getTime() - dateObj.getTime()) / (1000 * 60 * 60 * 24));
+      // 2. Date Score (up to 30 points)
+      const targetDate = mode === 'card_receivable' && p.due_date ? new Date(p.due_date) : new Date(p.occurrence_date);
+      const daysDiff = Math.abs((targetDate.getTime() - dateObj.getTime()) / (1000 * 60 * 60 * 24));
+      
       if (daysDiff === 0) {
-        score += 25;
+        score += 30;
         reasons.push("Mesma data");
+      } else if (daysDiff <= 2) {
+        score += 25;
+        reasons.push("Data muito próxima (±2 dias)");
+      } else if (daysDiff <= 5) {
+        score += 15;
+        reasons.push("Data próxima (±5 dias)");
       } else {
-        const dateScore = Math.max(0, 25 * (1 - daysDiff / 10));
+        const dateScore = Math.max(0, 30 * (1 - daysDiff / 10));
         score += dateScore;
-        if (dateScore > 15) reasons.push("Data próxima");
       }
 
-      // 3. Text similarity (up to 15 points)
+      // 3. Text Similarity (up to 10 points)
       const entityWords = normalize(p.favored?.name);
       const noteWords = normalize(p.observations);
-      
       let textScore = 0;
       const hasEntityMatch = entityWords.some(w => bankWords.includes(w));
       const hasNoteMatch = noteWords.some(w => bankWords.includes(w));
-      
-      if (hasEntityMatch) textScore += 10;
-      if (hasNoteMatch) textScore += 5;
-      
-      score += Math.min(15, textScore);
-      if (textScore > 0) reasons.push("Texto semelhante");
-      
-      // Bonus for learned mapping
+      if (hasEntityMatch) textScore += 7;
+      if (hasNoteMatch) textScore += 3;
+      score += textScore;
+      if (textScore > 0) reasons.push("Texto compatível");
+
+      // 4. Learned Mapping (up to 10 points)
       if (mapping && p.favored?.id === mapping.entity_id) {
-        score += 30; 
+        score += 10; 
         reasons.push("Favorecido frequente");
+      }
+
+      // Calculate Confidence Level based on Mode and Criteria
+      if (mode === 'card_receivable') {
+        if (diff <= 1.00 && daysDiff <= 2) {
+          confidenceLevel = 'high';
+          reasons.unshift("Alta confiança: Líquido e vencimento compatíveis");
+        } else if (diff <= 3.00 && daysDiff <= 5) {
+          confidenceLevel = 'medium';
+          reasons.unshift("Média confiança: Valores e datas próximos");
+        } else {
+          confidenceLevel = 'low';
+        }
+      } else if (mode === 'instant_receipt' || mode === 'expense') {
+        if (diff === 0 && daysDiff <= 2) {
+          confidenceLevel = 'high';
+          reasons.unshift("Alta confiança: Valor exato e data próxima");
+        } else if (diff <= 0.05 && daysDiff <= 3) {
+          confidenceLevel = 'medium';
+          reasons.unshift("Média confiança: Valor e data próximos");
+        } else {
+          confidenceLevel = 'low';
+        }
+      } else {
+        if (score >= 85) confidenceLevel = 'high';
+        else if (score >= 60) confidenceLevel = 'medium';
+        else confidenceLevel = 'low';
       }
 
       return {
         ...p,
         match_score: Math.min(100, Math.round(score)),
-        reasons: Array.from(new Set(reasons)).slice(0, 2),
+        confidence_level: confidenceLevel,
+        reconciliation_mode: mode,
+        expected_amount: expectedAmount,
+        reasons: Array.from(new Set(reasons)).slice(0, 3),
         difference: diff,
         days_diff: Math.round(daysDiff),
         has_mapping: mapping && p.favored?.id === mapping.entity_id
@@ -315,7 +398,6 @@ export const ofxImportService = {
       .eq('company_id', companyId)
       .neq('status', 'LIQUIDADO')
       .is('liquidation_date', null)
-      .not('accounts.name', 'ilike', 'VENDAS GERAIS')
       .order('occurrence_date', { ascending: false });
 
     if (filters.startDate) query = query.gte('occurrence_date', filters.startDate);
@@ -326,8 +408,7 @@ export const ofxImportService = {
     const { data, error } = await query;
     if (error) throw error;
 
-    // Extra safety filter
-    const filteredData = data.filter(p => p.accounts && p.accounts.name.toUpperCase() !== 'VENDAS GERAIS');
+    const filteredData = data || [];
 
     if (filters.query) {
       const q = filters.query.toLowerCase();
