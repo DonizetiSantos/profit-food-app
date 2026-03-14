@@ -172,3 +172,72 @@ export interface PaymentSettlementRule {
     name: string;
   };
 }
+
+export type ProfitFoodPaymentType =
+  | 'DINHEIRO'
+  | 'PIX'
+  | 'CARTAO_DEBITO'
+  | 'CARTAO_CREDITO'
+  | 'VOUCHER'
+  | 'APLICATIVO'
+  | 'OUTROS';
+
+export interface NormalizedPdvClosing {
+  source: string;
+  companyId: string;
+
+  closingDate: string;
+
+  rawLabel: string;
+  normalizedLabel: string;
+
+  paymentMethodType: ProfitFoodPaymentType;
+
+  amount: number;
+  quantity?: number;
+  percentage?: number;
+
+  acquirerName?: string;
+  cardBrand?: string;
+  channelName?: string;
+
+  paymentMethodId?: string | null;
+
+  mappedStatus?: 'LIQUIDADO' | 'PROVISIONADO' | null;
+
+  defaultBankId?: string | null;
+
+  settlementDays?: number | null;
+  receivesSameDay?: boolean | null;
+
+  feePercent?: number | null;
+  feeFixed?: number | null;
+
+  grossAmount: number;
+  feeAmount: number;
+  netAmount: number;
+
+  dueDate?: string | null;
+  liquidationDate?: string | null;
+
+  shouldGenerateRevenuePosting: boolean;
+  shouldGenerateFeePosting: boolean;
+  shouldGenerateReceiptPosting: boolean;
+
+  notes?: string;
+}
+
+export interface NormalizedPdvClosingBatch {
+  source: string;
+  companyId: string;
+  closingDate: string;
+
+  rows: NormalizedPdvClosing[];
+
+  totalGrossAmount: number;
+  totalFeeAmount: number;
+  totalNetAmount: number;
+
+  importedAt?: string;
+  notes?: string;
+}

@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { MainGroup, Account, Bank, PaymentMethod, Entity, FinancialPosting, XmlMapping } from '../types';
 import { XmlImportModal } from './XmlImportModal';
-import { SaiposImportModal } from './SaiposImportModal';
+import { PdvImportModal } from './PdvImportModal';
 
 interface Props {
   accounts: Account[];
@@ -44,7 +44,7 @@ export const FinancialPostings: React.FC<Props> = ({
   const [selectedBank, setSelectedBank] = useState('');
   const [amount, setAmount] = useState('');
   const [isXmlModalOpen, setIsXmlModalOpen] = useState(false);
-  const [isSaiposModalOpen, setIsSaiposModalOpen] = useState(false);
+  const [isPdvModalOpen, setIsPdvModalOpen] = useState(false);
 
   // Sincroniza o estado do formulário com o registro sendo editado
   useEffect(() => {
@@ -234,7 +234,7 @@ export const FinancialPostings: React.FC<Props> = ({
                 {selectedGroup === MainGroup.RECEITAS && !editingPosting && (
                   <button 
                     type="button"
-                    onClick={() => setIsSaiposModalOpen(true)}
+                    onClick={() => setIsPdvModalOpen(true)}
                     className="mt-2 flex items-center justify-center gap-2 py-2.5 bg-slate-800 hover:bg-slate-700 text-emerald-500 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border border-slate-700 shadow-lg"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
@@ -334,9 +334,9 @@ export const FinancialPostings: React.FC<Props> = ({
         onAddEntity={onAddFavored}
       />
 
-      <SaiposImportModal 
-        isOpen={isSaiposModalOpen}
-        onClose={() => setIsSaiposModalOpen(false)}
+      <PdvImportModal 
+        isOpen={isPdvModalOpen}
+        onClose={() => setIsPdvModalOpen(false)}
         banks={banks}
         paymentMethods={paymentMethods}
         onSuccess={() => {

@@ -1,6 +1,6 @@
 import { supabase } from '../src/lib/supabase';
 import { sha256 } from './hash';
-import { parseSaiposXlsx, SaiposVendaRow } from './saiposParser';
+import { parseSaiposXlsx, SaiposVendaRow } from './parsers/saiposParser';
 import { FinancialPosting, MainGroup } from '../types';
 import { accountService } from './accountService';
 import { settlementService } from './settlementService';
