@@ -4,7 +4,7 @@ import { detectPdvSource, PdvSource } from './pdvSourceDetector';
 import { parseSaiposClosing } from './parsers/saiposParser';
 import { parseTotvsChefClosing } from './parsers/totvsChefParser';
 import { parseGenericClosing } from './parsers/genericSpreadsheetParser';
-import { NormalizedPdvClosingBatch, PaymentSettlementRule } from '../types';
+import { NormalizedPdvClosing, NormalizedPdvClosingBatch, PaymentSettlementRule } from '../types';
 import { settlementService } from './settlementService';
 
 export interface PdvImportPreview {
@@ -18,6 +18,7 @@ export const pdvImportService = {
     const text = await file.text();
     const fileHash = await sha256(text);
 
+    // Check duplicate
     const { data: existing } = await supabase
       .from('pdv_imports')
       .select('id')
@@ -30,20 +31,19 @@ export const pdvImportService = {
     }
 
     const source = await detectPdvSource(file);
-
-    const { data: rules, error: rulesError } = await supabase
+    
+    // Get settlement rules for normalization
+    const { data: rules } = await supabase
       .from('payment_settlement_rules')
       .select('*, payment_methods(name)')
       .eq('company_id', companyId)
       .eq('is_active', true);
 
-    if (rulesError) {
-      throw rulesError;
-    }
-
     const settlementRules = (rules || []) as PaymentSettlementRule[];
+    
+    // Default closing date to today if not found in file (parsers might extract it)
     const today = new Date().toISOString().split('T')[0];
-
+    
     let batch: NormalizedPdvClosingBatch;
 
     switch (source) {
@@ -57,57 +57,46 @@ export const pdvImportService = {
         batch = await parseGenericClosing(file, companyId, today, settlementRules);
         break;
       default:
+        // Try generic if unknown but has some structure
         batch = await parseGenericClosing(file, companyId, today, settlementRules);
         if (batch.rows.length === 0) {
-          throw new Error(
-            'Não foi possível reconhecer a estrutura do arquivo. Verifique se o arquivo contém colunas de forma de pagamento e valor.'
-          );
+          throw new Error('Não foi possível reconhecer a estrutura do arquivo. Verifique se o arquivo contém colunas de forma de pagamento e valor.');
         }
-        break;
     }
 
-    const labels = Array.from(new Set(batch.rows.map((r) => r.rawLabel)));
+    // Apply existing mappings to the batch rows
+    const labels = Array.from(new Set(batch.rows.map(r => r.rawLabel)));
+    const { data: mappings } = await supabase
+      .from('pdv_payment_mapping')
+      .select('*')
+      .eq('company_id', companyId)
+      .eq('source', source.toUpperCase())
+      .in('raw_label', labels);
 
-    if (labels.length > 0) {
-      const { data: mappings, error: mappingsError } = await supabase
-        .from('pdv_payment_mapping')
-        .select('*')
-        .eq('company_id', companyId)
-        .eq('source', source.toUpperCase())
-        .in('raw_label', labels);
+    if (mappings && mappings.length > 0) {
+      const mappingMap = mappings.reduce((acc, m) => {
+        acc[m.raw_label] = m;
+        return acc;
+      }, {} as Record<string, any>);
 
-      if (mappingsError) {
-        throw mappingsError;
-      }
-
-      if (mappings && mappings.length > 0) {
-        const mappingMap = mappings.reduce(
-          (acc, m) => {
-            acc[m.raw_label] = m;
-            return acc;
-          },
-          {} as Record<string, any>
-        );
-
-        batch.rows = batch.rows.map((row) => {
-          const mapping = mappingMap[row.rawLabel];
-          if (mapping) {
-            return {
-              ...row,
-              paymentMethodId: row.paymentMethodId || mapping.payment_method_id,
-              mappedStatus: row.mappedStatus || mapping.default_status,
-              defaultBankId: row.defaultBankId || mapping.default_bank_id,
-            };
-          }
-          return row;
-        });
-      }
+      batch.rows = batch.rows.map(row => {
+        const mapping = mappingMap[row.rawLabel];
+        if (mapping) {
+          return {
+            ...row,
+            paymentMethodId: row.paymentMethodId || mapping.payment_method_id,
+            mappedStatus: row.mappedStatus || mapping.default_status,
+            defaultBankId: row.defaultBankId || mapping.default_bank_id
+          };
+        }
+        return row;
+      });
     }
 
     return {
       source,
       batch,
-      fileHash,
+      fileHash
     };
   },
 
@@ -126,8 +115,8 @@ export const pdvImportService = {
       throw new Error('Não foi possível resolver a conta de Vendas Gerais.');
     }
 
+    // 1. Create PDV Import record
     const importId = crypto.randomUUID();
-
     const { error: importError } = await supabase
       .from('pdv_imports')
       .insert({
@@ -139,34 +128,32 @@ export const pdvImportService = {
         from_date: batch.closingDate,
         to_date: batch.closingDate,
         total_rows: batch.rows.length,
-        status: 'IMPORTED',
+        status: 'IMPORTED'
       });
 
-    if (importError) {
-      throw importError;
-    }
+    if (importError) throw importError;
 
+    // 2. Prepare Postings and Mappings
     const postings: any[] = [];
     const importItems: any[] = [];
     const mappingsToUpsert: any[] = [];
     const seenLabels = new Set<string>();
 
     for (const row of batch.rows) {
-      let revenuePostingId: string | null = null;
-
+      const postingId = crypto.randomUUID();
+      
+      // Determine bank for liquidated items
       let bankId = row.defaultBankId;
-
       if (!bankId && row.mappedStatus === 'LIQUIDADO') {
         if (row.paymentMethodType === 'DINHEIRO') {
           bankId = caixaEmpresaId;
         }
       }
 
+      // Revenue Posting
       if (row.shouldGenerateRevenuePosting) {
-        revenuePostingId = crypto.randomUUID();
-
         postings.push({
-          id: revenuePostingId,
+          id: postingId,
           company_id: companyId,
           status: row.mappedStatus || 'PROVISIONADO',
           competence_date: row.closingDate,
@@ -178,10 +165,11 @@ export const pdvImportService = {
           observations: `Venda PDV (${source}) - ${row.rawLabel}`,
           payment_method_id: row.paymentMethodId,
           amount: row.grossAmount,
-          bank_id: bankId || null,
+          bank_id: bankId || null
         });
       }
 
+      // Fee Posting
       if (row.shouldGenerateFeePosting && feeAccountId) {
         postings.push({
           id: crypto.randomUUID(),
@@ -196,21 +184,21 @@ export const pdvImportService = {
           observations: `Taxa PDV (${source}) - ${row.rawLabel}`,
           payment_method_id: row.paymentMethodId,
           amount: row.feeAmount,
-          bank_id: bankId || null,
+          bank_id: bankId || null
         });
       }
 
-      if (revenuePostingId) {
-        importItems.push({
-          company_id: companyId,
-          pdv_import_id: importId,
-          posting_id: revenuePostingId,
-          raw_label: row.rawLabel,
-          amount: row.grossAmount,
-          day: row.closingDate,
-        });
-      }
+      // Import Item link
+      importItems.push({
+        company_id: companyId,
+        pdv_import_id: importId,
+        posting_id: postingId,
+        raw_label: row.rawLabel,
+        amount: row.grossAmount,
+        day: row.closingDate
+      });
 
+      // Mapping persistence
       if (!seenLabels.has(row.rawLabel)) {
         mappingsToUpsert.push({
           company_id: companyId,
@@ -218,39 +206,26 @@ export const pdvImportService = {
           raw_label: row.rawLabel,
           payment_method_id: row.paymentMethodId,
           default_status: row.mappedStatus || 'PROVISIONADO',
-          default_bank_id: row.defaultBankId || null,
+          default_bank_id: row.defaultBankId || null
         });
         seenLabels.add(row.rawLabel);
       }
     }
 
+    // 3. Persist
     if (mappingsToUpsert.length > 0) {
-      const { error: mappingsUpsertError } = await supabase
-        .from('pdv_payment_mapping')
-        .upsert(mappingsToUpsert, { onConflict: 'company_id, source, raw_label' });
-
-      if (mappingsUpsertError) {
-        throw mappingsUpsertError;
-      }
+      await supabase.from('pdv_payment_mapping').upsert(mappingsToUpsert, { onConflict: 'company_id, source, raw_label' });
     }
 
     if (postings.length > 0) {
       const { error: postError } = await supabase.from('postings').insert(postings);
-      if (postError) {
-        throw postError;
-      }
+      if (postError) throw postError;
     }
 
     if (importItems.length > 0) {
-      const { error: importItemsError } = await supabase
-        .from('pdv_import_items')
-        .insert(importItems);
-
-      if (importItemsError) {
-        throw importItemsError;
-      }
+      await supabase.from('pdv_import_items').insert(importItems);
     }
 
     return { warnings };
-  },
+  }
 };
