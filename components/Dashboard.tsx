@@ -283,6 +283,86 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
     return "O resultado operacional atual sugere atenção imediata. Vale investigar se a compressão vem de custos fixos elevados ou margens reduzidas.";
   }, [dreData]);
 
+  const priorityFinancial = useMemo(() => {
+    if (dreData.faturamentoBruto === 0) return null;
+
+    const faturamento = dreData.faturamentoBruto;
+    const indicators = [
+      {
+        name: 'CMV',
+        current: (dreData.cmv / faturamento) * 100,
+        ideal: 35,
+        type: 'lower',
+        impact: 'Redução da margem bruta e pressão no lucro operacional.',
+        label: 'Custo de Mercadoria'
+      },
+      {
+        name: 'Margem de Contribuição',
+        current: (dreData.lucroBruto / faturamento) * 100,
+        ideal: 40,
+        type: 'higher',
+        impact: 'Dificuldade em cobrir custos fixos e gerar lucro líquido.',
+        label: 'Margem de Contribuição'
+      },
+      {
+        name: 'Despesas Fixas',
+        current: (dreData.totalDespesasFixas / faturamento) * 100,
+        ideal: 35,
+        type: 'lower',
+        impact: 'Estrutura pesada que exige faturamento muito alto para equilibrar.',
+        label: 'Despesas Fixas'
+      },
+      {
+        name: 'Custo com Pessoal',
+        current: (dreData.pessoal / faturamento) * 100,
+        ideal: 25,
+        type: 'lower',
+        impact: 'Folha de pagamento desproporcional ao volume de vendas.',
+        label: 'Custo de Pessoal'
+      },
+      {
+        name: 'Despesas Financeiras',
+        current: (dreData.despesasFinanceiras / faturamento) * 100,
+        ideal: 5,
+        type: 'lower',
+        impact: 'Endividamento ou taxas bancárias corroendo o resultado final.',
+        label: 'Despesas Financeiras'
+      },
+      {
+        name: 'Lucratividade',
+        current: (dreData.lucroOperacional / faturamento) * 100,
+        ideal: 10,
+        type: 'higher',
+        impact: 'Retorno sobre a operação abaixo do esperado para o setor.',
+        label: 'Lucratividade'
+      }
+    ];
+
+    const deviations = indicators.map(ind => {
+      const deviation = ind.type === 'lower' 
+        ? ind.current - ind.ideal 
+        : ind.ideal - ind.current;
+      return { ...ind, deviation };
+    });
+
+    const worst = deviations.reduce((prev, current) => (prev.deviation > current.deviation) ? prev : current);
+
+    if (worst.deviation <= 0) return { healthy: true };
+
+    const estimatedImpact = faturamento * (worst.deviation / 100);
+
+    return {
+      healthy: false,
+      name: worst.name,
+      label: worst.label,
+      current: worst.current,
+      ideal: worst.ideal,
+      impact: worst.impact,
+      type: worst.type,
+      estimatedImpact
+    };
+  }, [dreData]);
+
   const handleLiquidarAction = (p: FinancialPosting) => {
     if (onLiquidar) onLiquidar(p);
   };
@@ -357,6 +437,68 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
         <IndicatorCard title="Financeiras" value={dreData.despesasFinanceiras} type="FINANCEIRAS" />
         <IndicatorCard title="Lucratividade" value={dreData.lucroOperacional} type="LUCRATIVIDADE" />
       </div>
+
+      {/* PRIORIDADE FINANCEIRA DO NEGÓCIO */}
+      {priorityFinancial && (
+        <div className={`p-6 rounded-3xl border shadow-xl flex flex-col md:flex-row items-center gap-6 transition-all duration-500 ${priorityFinancial.healthy ? 'bg-emerald-900/10 border-emerald-500/20' : 'bg-rose-900/10 border-rose-500/20'}`}>
+          <div className={`p-4 rounded-2xl shrink-0 ${priorityFinancial.healthy ? 'bg-emerald-500/20' : 'bg-rose-500/20'}`}>
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={priorityFinancial.healthy ? 'text-emerald-400' : 'text-rose-400'}>
+              {priorityFinancial.healthy ? (
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14M22 4L12 14.01l-3-3" />
+              ) : (
+                <>
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </>
+              )}
+            </svg>
+          </div>
+          
+          <div className="flex-1">
+            <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-1">Prioridade Financeira</h3>
+            {priorityFinancial.healthy ? (
+              <p className="text-sm font-black text-emerald-400 uppercase tracking-tight">
+                Indicadores financeiros dentro da faixa saudável segundo o método Profit Food.
+              </p>
+            ) : (
+              <div className="space-y-4">
+                <div>
+                  <h4 className="text-xl font-black text-white uppercase tracking-tight leading-none">
+                    {priorityFinancial.label} ACIMA DO IDEAL
+                  </h4>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase mt-1">
+                    Foco imediato na correção deste indicador para proteger o resultado.
+                  </p>
+                </div>
+                
+                <div className="flex gap-8">
+                  <div>
+                    <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Atual</p>
+                    <p className="text-lg font-black text-rose-400">{priorityFinancial.current.toFixed(1)}%</p>
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Ideal</p>
+                    <p className="text-lg font-black text-emerald-400">{priorityFinancial.type === 'lower' ? 'até' : 'mínimo'} {priorityFinancial.ideal}%</p>
+                  </div>
+                  {priorityFinancial.estimatedImpact && (
+                    <div className="pl-8 border-l border-slate-800/50">
+                      <p className="text-[9px] font-black text-amber-500 uppercase tracking-widest mb-1">Impacto Estimado no Resultado</p>
+                      <p className="text-lg font-black text-white">+{formatCurrency(priorityFinancial.estimatedImpact)}/mês</p>
+                      <p className="text-[8px] font-bold text-slate-500 uppercase mt-0.5">Se ajustado ao nível ideal</p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="pt-3 border-t border-slate-800/50">
+                  <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Possível Impacto</p>
+                  <p className="text-xs font-medium text-slate-300 italic">"{priorityFinancial.impact}"</p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* 2. Interpretação Executiva Curta */}
       <div className="bg-indigo-600/5 border border-indigo-500/20 p-3 rounded-xl flex items-center gap-3">
