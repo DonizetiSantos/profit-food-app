@@ -97,7 +97,11 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
 
   const { overdue, upcoming, overdueTotal, upcomingTotal } = useMemo(() => {
     const expenses = postings
-      .filter(p => p.status === 'PROVISIONADO' && p.group === MainGroup.DESPESAS && p.dueDate)
+      .filter(p => {
+        const account = accounts.find(a => a.id === p.accountId);
+        const isTaxaCartao = account?.name.toUpperCase() === 'TAXAS CARTÕES';
+        return p.status === 'PROVISIONADO' && p.group === MainGroup.DESPESAS && p.dueDate && !isTaxaCartao;
+      })
       .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
 
     const overdueList = expenses.filter(p => p.dueDate < today);
