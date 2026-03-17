@@ -350,13 +350,16 @@ const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void
         <div className="w-20 h-20 bg-rose-500/10 rounded-3xl flex items-center justify-center border border-rose-500/20 mb-6">
           <svg className="text-rose-500" xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
         </div>
-        <h2 className="text-2xl font-black text-white mb-2 uppercase tracking-tight">Erro de Conexão</h2>
-        <p className="text-slate-400 max-w-md mb-8 font-medium">{companyError || error}</p>
+        <h2 className="text-2xl font-black text-white mb-2 uppercase tracking-tight">NÃO CONSEGUIMOS CARREGAR SEUS DADOS</h2>
+        <p className="text-slate-400 max-w-md mb-8 font-medium">
+          Isso pode acontecer após atualização do sistema.<br /><br />
+          Clique em "Atualizar sessão" para continuar.
+        </p>
         <button 
-          onClick={() => window.location.reload()}
+          onClick={(e) => { onLogout(e); window.location.reload(); }}
           className="bg-rose-600 hover:bg-rose-500 text-white px-8 py-3 rounded-2xl font-black uppercase tracking-widest transition-all shadow-lg shadow-rose-600/20"
         >
-          Tentar Novamente
+          ATUALIZAR SESSÃO
         </button>
       </div>
     );
@@ -365,9 +368,20 @@ const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void
   if (!activeCompany) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-center">
-        <h2 className="text-2xl font-black text-white mb-2 uppercase tracking-tight">Nenhuma Empresa Ativa</h2>
-        <p className="text-slate-400 max-w-md mb-8 font-medium">Seu usuário não está vinculado a nenhuma empresa no sistema.</p>
-        <button onClick={onLogout} className="bg-rose-600 hover:bg-rose-500 text-white px-8 py-3 rounded-2xl font-black uppercase tracking-widest transition-all shadow-lg shadow-rose-600/20">Sair</button>
+        <div className="w-20 h-20 bg-rose-500/10 rounded-3xl flex items-center justify-center border border-rose-500/20 mb-6">
+          <svg className="text-rose-500" xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+        </div>
+        <h2 className="text-2xl font-black text-white mb-2 uppercase tracking-tight">NÃO CONSEGUIMOS CARREGAR SEUS DADOS</h2>
+        <p className="text-slate-400 max-w-md mb-8 font-medium">
+          Isso pode acontecer após atualização do sistema.<br /><br />
+          Clique em "Atualizar sessão" para continuar.
+        </p>
+        <button 
+          onClick={(e) => { onLogout(e); window.location.reload(); }}
+          className="bg-rose-600 hover:bg-rose-500 text-white px-8 py-3 rounded-2xl font-black uppercase tracking-widest transition-all shadow-lg shadow-rose-600/20"
+        >
+          ATUALIZAR SESSÃO
+        </button>
       </div>
     );
   }
