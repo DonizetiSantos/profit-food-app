@@ -76,9 +76,24 @@ export const getDetailedFinancialAnalysis = async (dreData: any, dashboardStats:
 
     REGRAS DE RETORNO:
     1. breakEven: Apenas o valor em Reais (Ex: R$ 85.000). Cálculo: Fixas / (MC/Vendas Brutas).
-    2. summary: Texto consultivo, citando hipóteses (Ex: se MC caiu, investigar precificação ou desperdício). 
-    3. healthScore: Nota de 0 a 100 baseada na média dos indicadores.
-    4. Todos os percentuais devem ser citados como "pontos percentuais".
+    2. summary: Texto consultivo profundo e profissional. Sempre que um indicador estiver fora do ideal, você DEVE incluir o IMPACTO FINANCEIRO ESTIMADO em R$ (Cálculo: Vendas Brutas * diferença percentual entre o valor atual e o ideal).
+       ESTRUTURA OBRIGATÓRIA PARA DESVIOS:
+       - Identificação do problema (Ex: CMV acima do ideal)
+       - Explicação técnica (Ex: pressão nos custos de insumos)
+       - Inclusão do impacto financeiro em R$ (Ex: impacto estimado de aproximadamente R$ X)
+       - Consequência no resultado (Ex: perda de eficiência na gestão de compras)
+       
+       EXEMPLO DE SAÍDA: "O CMV encontra-se acima do limite ideal, indicando pressão direta sobre os custos e redução da margem operacional. Esse desvio representa um impacto estimado de aproximadamente R$ X no resultado do período, evidenciando perda de eficiência na gestão de compras ou produção."
+    3. recommendations: Plano de ação prático. Cada item DEVE conter: Ação prática clara + Conexão com o problema + Impacto financeiro estimado (R$) + Consequência no resultado.
+       EXEMPLO: "A renegociação com fornecedores aliada ao controle rigoroso de desperdícios pode recuperar aproximadamente R$ X no resultado mensal, corrigindo o desvio identificado no CMV e aumentando a eficiência operacional."
+    4. healthScore: Nota de 0 a 100 baseada na média dos indicadores.
+    5. Todos os percentuais devem ser citados como "pontos percentuais".
+    6. REGRAS DE LINGUAGEM:
+       - NÃO usar linguagem alarmista ou sensacionalista.
+       - NÃO afirmar valores como exatos -> sempre usar: "impacto estimado" ou "potencial de ganho".
+       - NÃO dizer que é prejuízo real -> tratar como potencial ou impacto no resultado.
+       - Manter tom consultivo profissional (padrão Profit Food).
+       - Sempre relacionar impacto com eficiência operacional.
   `;
 
   try {
@@ -86,7 +101,7 @@ export const getDetailedFinancialAnalysis = async (dreData: any, dashboardStats:
       model: 'gemini-3-pro-preview',
       contents: prompt,
       config: {
-        systemInstruction: "Retorne APENAS um JSON válido. Use os benchmarks ProfitFood rigorosamente para definir os status 'success', 'warning' ou 'danger'. Seja técnico e imparcial.",
+        systemInstruction: "Você é o Assistente de Diagnóstico Financeiro ProfitFood. Retorne APENAS um JSON válido. Use os benchmarks ProfitFood rigorosamente. CRITICAL: Sempre traduza desvios e ações sugeridas em impacto financeiro estimado (R$) no texto do 'summary', 'description' e 'recommendations', seguindo a estrutura obrigatória de conexão com resultado e eficiência operacional.",
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,

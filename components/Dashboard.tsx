@@ -421,6 +421,11 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
 
   return (
     <div className="space-y-6 animate-fade-in pb-12">
+      <header className="mb-8">
+        <h2 className="text-3xl font-black text-white tracking-tight uppercase">Painel do Dono</h2>
+        <p className="text-slate-500 text-sm font-medium uppercase tracking-widest">Visão Geral da Operação</p>
+      </header>
+
       {/* 1. Indicadores Executivos do Topo */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-4">
         <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 shadow-xl flex flex-col gap-1">
@@ -438,76 +443,82 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
         <IndicatorCard title="Lucratividade" value={dreData.lucroOperacional} type="LUCRATIVIDADE" />
       </div>
 
-      {/* PRIORIDADE FINANCEIRA DO NEGÓCIO */}
-      {priorityFinancial && (
-        <div className={`p-6 rounded-3xl border shadow-xl flex flex-col md:flex-row items-center gap-6 transition-all duration-500 ${priorityFinancial.healthy ? 'bg-emerald-900/10 border-emerald-500/20' : 'bg-rose-900/10 border-rose-500/20'}`}>
-          <div className={`p-4 rounded-2xl shrink-0 ${priorityFinancial.healthy ? 'bg-emerald-500/20' : 'bg-rose-500/20'}`}>
-            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={priorityFinancial.healthy ? 'text-emerald-400' : 'text-rose-400'}>
+      {/* PRIORIDADE FINANCEIRA E PARECER CONSULTIVO */}
+      <div className="flex flex-col xl:flex-row gap-6">
+        {/* PRIORIDADE FINANCEIRA DO NEGÓCIO */}
+        {priorityFinancial && (
+          <div className={`flex-1 p-6 rounded-3xl border shadow-xl flex flex-col md:flex-row items-center gap-6 transition-all duration-500 ${priorityFinancial.healthy ? 'bg-emerald-900/10 border-emerald-500/20' : 'bg-rose-900/10 border-rose-500/20'}`}>
+            <div className={`p-4 rounded-2xl shrink-0 ${priorityFinancial.healthy ? 'bg-emerald-500/20' : 'bg-rose-500/20'}`}>
+              <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={priorityFinancial.healthy ? 'text-emerald-400' : 'text-rose-400'}>
+                {priorityFinancial.healthy ? (
+                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14M22 4L12 14.01l-3-3" />
+                ) : (
+                  <>
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </>
+                )}
+              </svg>
+            </div>
+            
+            <div className="flex-1">
+              <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-1">Prioridade Financeira</h3>
               {priorityFinancial.healthy ? (
-                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14M22 4L12 14.01l-3-3" />
+                <p className="text-sm font-black text-emerald-400 uppercase tracking-tight">
+                  Indicadores financeiros dentro da faixa saudável segundo o método Profit Food.
+                </p>
               ) : (
-                <>
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="8" x2="12" y2="12" />
-                  <line x1="12" y1="16" x2="12.01" y2="16" />
-                </>
-              )}
-            </svg>
-          </div>
-          
-          <div className="flex-1">
-            <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-1">Prioridade Financeira</h3>
-            {priorityFinancial.healthy ? (
-              <p className="text-sm font-black text-emerald-400 uppercase tracking-tight">
-                Indicadores financeiros dentro da faixa saudável segundo o método Profit Food.
-              </p>
-            ) : (
-              <div className="space-y-4">
-                <div>
-                  <h4 className="text-xl font-black text-white uppercase tracking-tight leading-none">
-                    {priorityFinancial.label} ACIMA DO IDEAL
-                  </h4>
-                  <p className="text-[10px] font-bold text-slate-400 uppercase mt-1">
-                    Foco imediato na correção deste indicador para proteger o resultado.
-                  </p>
-                </div>
-                
-                <div className="flex gap-8">
+                <div className="space-y-4">
                   <div>
-                    <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Atual</p>
-                    <p className="text-lg font-black text-rose-400">{priorityFinancial.current.toFixed(1)}%</p>
+                    <h4 className="text-xl font-black text-white uppercase tracking-tight leading-none">
+                      {priorityFinancial.label} ACIMA DO IDEAL
+                    </h4>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase mt-1">
+                      Foco imediato na correção deste indicador para proteger o resultado.
+                    </p>
                   </div>
-                  <div>
-                    <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Ideal</p>
-                    <p className="text-lg font-black text-emerald-400">{priorityFinancial.type === 'lower' ? 'até' : 'mínimo'} {priorityFinancial.ideal}%</p>
-                  </div>
-                  {priorityFinancial.estimatedImpact && (
-                    <div className="pl-8 border-l border-slate-800/50">
-                      <p className="text-[9px] font-black text-amber-500 uppercase tracking-widest mb-1">Impacto Estimado no Resultado</p>
-                      <p className="text-lg font-black text-white">+{formatCurrency(priorityFinancial.estimatedImpact)}/mês</p>
-                      <p className="text-[8px] font-bold text-slate-500 uppercase mt-0.5">Se ajustado ao nível ideal</p>
+                  
+                  <div className="flex gap-8">
+                    <div>
+                      <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Atual</p>
+                      <p className="text-lg font-black text-rose-400">{priorityFinancial.current.toFixed(1)}%</p>
                     </div>
-                  )}
-                </div>
+                    <div>
+                      <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Ideal</p>
+                      <p className="text-lg font-black text-emerald-400">{priorityFinancial.type === 'lower' ? 'até' : 'mínimo'} {priorityFinancial.ideal}%</p>
+                    </div>
+                    {priorityFinancial.estimatedImpact && (
+                      <div className="pl-8 border-l border-slate-800/50">
+                        <p className="text-[9px] font-black text-amber-500 uppercase tracking-widest mb-1">Impacto Estimado no Resultado</p>
+                        <p className="text-lg font-black text-white">+{formatCurrency(priorityFinancial.estimatedImpact)}/mês</p>
+                        <p className="text-[8px] font-bold text-slate-500 uppercase mt-0.5">Se ajustado ao nível ideal</p>
+                      </div>
+                    )}
+                  </div>
 
-                <div className="pt-3 border-t border-slate-800/50">
-                  <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Possível Impacto</p>
-                  <p className="text-xs font-medium text-slate-300 italic">"{priorityFinancial.impact}"</p>
+                  <div className="pt-3 border-t border-slate-800/50">
+                    <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Possível Impacto</p>
+                    <p className="text-xs font-medium text-slate-300 italic">"{priorityFinancial.impact}"</p>
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* 2. Interpretação Executiva Curta */}
-      <div className="bg-indigo-600/5 border border-indigo-500/20 p-3 rounded-xl flex items-center gap-3">
-        <div className="bg-indigo-600/20 p-1.5 rounded-lg">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-indigo-400"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+        {/* 2. Interpretação Executiva Curta */}
+        <div className={`${priorityFinancial ? 'xl:w-1/3' : 'w-full'} bg-indigo-600/5 border border-indigo-500/20 p-6 rounded-3xl flex flex-col justify-center gap-4`}>
+          <div className="flex items-center gap-3">
+            <div className="bg-indigo-600/20 p-2 rounded-xl">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-indigo-400"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+            </div>
+            <h3 className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em]">Parecer Consultivo</h3>
+          </div>
+          <p className="text-xs font-medium text-indigo-200/80 italic leading-relaxed">
+            {interpretationText}
+          </p>
         </div>
-        <p className="text-[11px] font-medium text-indigo-200/80 italic leading-relaxed">
-          {interpretationText}
-        </p>
       </div>
 
       {/* 3. Radar Financeiro Executivo */}

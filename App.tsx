@@ -417,7 +417,7 @@ const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void
                   }} 
                   className={`px-4 py-2 rounded-xl text-xs font-bold uppercase transition-all ${currentPage === id ? 'bg-slate-800 text-rose-500 shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}
                 >
-                  {id === 'contas' ? 'Plano' : id === 'lista' ? 'Registros' : id === 'conciliacao' ? 'Conciliação' : id === 'configuracoes' ? 'Configurações' : id === 'lancamentos' ? 'Lançamentos' : id}
+                  {id === 'dashboard' ? 'Painel do Dono' : id === 'contas' ? 'Plano' : id === 'lista' ? 'Registros' : id === 'conciliacao' ? 'Conciliação' : id === 'configuracoes' ? 'Configurações' : id === 'lancamentos' ? 'Lançamentos' : id}
                 </button>
               ))}
             </nav>
