@@ -56,6 +56,7 @@ export const FinancialAnalysis: React.FC<Props> = ({ data, period, onBack }) => 
           <div class="text-right">
             <p class="text-[10px] font-black text-slate-500 uppercase">Score Geral</p>
             <p class="text-4xl font-black text-white">${data.healthScore}/100</p>
+            <p class="text-[10px] text-slate-400 mt-1 max-w-[200px] ml-auto">${data.scoreExplanation}</p>
           </div>
         </div>
 
@@ -88,6 +89,16 @@ export const FinancialAnalysis: React.FC<Props> = ({ data, period, onBack }) => 
         <div class="card">
           <h2 class="text-[10px] font-black text-blue-400 uppercase tracking-[0.3em] mb-6">Parecer Consultivo Especializado</h2>
           <p class="text-slate-300 leading-relaxed whitespace-pre-line italic">${data.summary}</p>
+        </div>
+
+        <div class="card border-rose-500/30 bg-rose-500/5">
+          <h2 class="text-[10px] font-black text-rose-500 uppercase tracking-[0.3em] mb-6">O que acontece se nada for feito</h2>
+          <p class="text-rose-200 text-sm leading-relaxed whitespace-pre-line">${data.whatIfNothingIsDone}</p>
+        </div>
+
+        <div class="card border-emerald-500/30 bg-emerald-500/5">
+          <h2 class="text-[10px] font-black text-emerald-400 uppercase tracking-[0.3em] mb-6">Oportunidade de Recuperação</h2>
+          <p class="text-emerald-200 text-sm leading-relaxed whitespace-pre-line">${data.recoveryOpportunity}</p>
         </div>
 
         <div class="card">
@@ -156,6 +167,7 @@ export const FinancialAnalysis: React.FC<Props> = ({ data, period, onBack }) => 
           <div className="text-right">
             <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Score Geral</p>
             <p className="text-2xl font-black text-white tracking-tighter">{data.healthScore}/100</p>
+            <p className="text-[8px] text-slate-500 mt-1 max-w-[150px] ml-auto leading-tight uppercase font-bold">{data.scoreExplanation}</p>
           </div>
           <div className="relative w-14 h-14 flex items-center justify-center">
             <svg className="w-full h-full transform -rotate-90">
@@ -227,7 +239,7 @@ export const FinancialAnalysis: React.FC<Props> = ({ data, period, onBack }) => 
           <h3 className="text-[10px] font-black text-blue-400 uppercase tracking-[0.3em]">
             Parecer Consultivo Especializado
           </h3>
-          <span className="text-[8px] font-black text-slate-600 uppercase tracking-widest">Baseado em Hipóteses Plausíveis</span>
+          <span className="text-[8px] font-black text-slate-600 uppercase tracking-widest">Análise Estratégica Premium</span>
         </div>
         <div className="p-10 lg:p-14">
           <div className="prose prose-invert max-w-none">
@@ -235,6 +247,34 @@ export const FinancialAnalysis: React.FC<Props> = ({ data, period, onBack }) => 
               {data.summary}
             </p>
           </div>
+        </div>
+      </section>
+
+      {/* BLOCO DE CONVERSÃO/URGÊNCIA: O QUE ACONTECE SE NADA FOR FEITO */}
+      <section className="bg-rose-500/5 rounded-[2.5rem] border border-rose-500/20 overflow-hidden shadow-2xl">
+        <div className="px-10 py-6 border-b border-rose-500/10 bg-rose-500/10">
+          <h3 className="text-[10px] font-black text-rose-500 uppercase tracking-[0.3em]">
+            O que acontece se nada for feito
+          </h3>
+        </div>
+        <div className="p-10">
+          <p className="text-rose-200/80 leading-[1.8] text-sm font-medium whitespace-pre-line italic print:text-rose-900">
+            {data.whatIfNothingIsDone}
+          </p>
+        </div>
+      </section>
+
+      {/* BLOCO DE OPORTUNIDADE: RECUPERAÇÃO FINANCEIRA */}
+      <section className="bg-emerald-500/5 rounded-[2.5rem] border border-emerald-500/20 overflow-hidden shadow-2xl">
+        <div className="px-10 py-6 border-b border-emerald-500/10 bg-emerald-500/10">
+          <h3 className="text-[10px] font-black text-emerald-400 uppercase tracking-[0.3em]">
+            Oportunidade de Recuperação
+          </h3>
+        </div>
+        <div className="p-10">
+          <p className="text-emerald-200/80 leading-[1.8] text-sm font-medium whitespace-pre-line italic print:text-emerald-900">
+            {data.recoveryOpportunity}
+          </p>
         </div>
       </section>
 
