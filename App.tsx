@@ -16,6 +16,36 @@ import { Reconciliation } from './components/Reconciliation';
 import { FinancialAssumptions } from './components/FinancialAssumptions';
 import { supabase } from './src/lib/supabase';
 import { CompanyProvider, useActiveCompany } from './src/contexts/CompanyContext';
+import { Company } from './types';
+
+const WHATSAPP_LINK = "https://wa.me/5511999999999"; // Configurar link aqui
+
+const canAccessCompany = (company: Company | null): boolean => {
+  if (!company) return false;
+  
+  const status = company.subscription_status;
+  
+  // Se subscription_status = 'active' → acesso liberado
+  if (status === 'active') return true;
+  
+  // Se subscription_status = 'blocked' → bloquear acesso
+  // Se subscription_status = 'expired' → bloquear acesso
+  if (status === 'blocked' || status === 'expired') return false;
+  
+  // Se subscription_status = 'trial':
+  if (status === 'trial') {
+    // se não houver trial_ends_at → false
+    if (!company.trial_ends_at) return false;
+    
+    // se data atual <= trial_ends_at → true
+    // se data atual > trial_ends_at → false
+    const trialEnd = new Date(company.trial_ends_at);
+    const now = new Date();
+    return now <= trialEnd;
+  }
+  
+  return false; // Default blocked for safety
+};
 
 const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void }> = ({ user, onLogout }) => {
   const { activeCompany, loading: companyLoading, error: companyError } = useActiveCompany();
@@ -386,6 +416,40 @@ const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void
     );
   }
 
+  if (!canAccessCompany(activeCompany)) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-center">
+        <div className="w-20 h-20 bg-rose-500/10 rounded-3xl flex items-center justify-center border border-rose-500/20 mb-6">
+          <svg className="text-rose-500" xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+        </div>
+        <h2 className="text-2xl font-black text-white mb-2 uppercase tracking-tight text-balance">SEU PERÍODO DE TESTE TERMINOU</h2>
+        <p className="text-slate-400 max-w-md mb-8 font-medium">
+          O acesso desta empresa ao Profit Food está temporariamente indisponível.<br /><br />
+          Para continuar utilizando o sistema, entre em contato para ativação do seu plano.
+        </p>
+        <div className="flex flex-col sm:flex-row gap-4">
+          <a 
+            href={WHATSAPP_LINK}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="bg-emerald-600 hover:bg-emerald-500 text-white px-8 py-3 rounded-2xl font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-600/20 inline-flex items-center justify-center gap-2"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+            FALAR NO WHATSAPP
+          </a>
+          <button 
+            onClick={onLogout}
+            className="bg-slate-800 hover:bg-slate-700 text-white px-8 py-3 rounded-2xl font-black uppercase tracking-widest transition-all border border-slate-700"
+          >
+            SAIR
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center gap-6">
@@ -400,44 +464,60 @@ const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 pb-20 selection:bg-rose-500/30">
       <header className="bg-slate-900/80 backdrop-blur-md border-b border-slate-800 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex flex-col lg:flex-row justify-between items-center gap-6">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 flex items-center justify-center pointer-events-none">
-              <svg viewBox="0 0 100 100" className="w-full h-full text-rose-500 fill-current">
-                 <path d="M20,10 L70,10 C85,10 95,25 95,40 C95,55 85,70 70,70 L40,70 L40,95 L20,95 L20,10 Z M40,30 L40,50 L70,50 C75,50 80,45 80,40 C80,35 75,30 70,30 L40,30 Z" />
-              </svg>
-            </div>
-            <div className="flex flex-col">
-              <div className="flex items-baseline gap-3">
-                <span className="text-xl font-black text-white leading-none tracking-tight uppercase">PROFIT FOOD</span>
-                <span className="text-[11px] font-black text-rose-500 uppercase tracking-widest bg-rose-500/10 px-3 py-1 rounded-lg border border-rose-500/20">
+        <div className="max-w-7xl mx-auto px-4 py-2 flex flex-col gap-2">
+          {/* Linha 1: Logo, Empresa, Trial e Botão Painel do Dono */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3 overflow-hidden">
+              <div className="w-8 h-8 flex-shrink-0 flex items-center justify-center pointer-events-none">
+                <svg viewBox="0 0 100 100" className="w-full h-full text-rose-500 fill-current">
+                   <path d="M20,10 L70,10 C85,10 95,25 95,40 C95,55 85,70 70,70 L40,70 L40,95 L20,95 L20,10 Z M40,30 L40,50 L70,50 C75,50 80,45 80,40 C80,35 75,30 70,30 L40,30 Z" />
+                </svg>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-base font-black text-white leading-none tracking-tight uppercase whitespace-nowrap">PROFIT FOOD</span>
+                <span className="text-[10px] font-black text-rose-500 uppercase tracking-widest bg-rose-500/10 px-2 py-0.5 rounded-lg border border-rose-500/20 whitespace-nowrap">
                   {activeCompany.name}
                 </span>
-              </div>
-              <div className="flex items-center gap-2 mt-1">
-                <span className="text-[9px] font-medium text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                  Olá, {user.name.split(' ')[0]} {syncing && <span className="w-1.5 h-1.5 bg-rose-500 rounded-full animate-ping"></span>}
-                </span>
+                {activeCompany.subscription_status === 'trial' && activeCompany.trial_ends_at && (
+                  <span className="text-[9px] font-bold text-emerald-500 uppercase tracking-widest bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 whitespace-nowrap">
+                    Teste até {new Date(activeCompany.trial_ends_at).toLocaleDateString('pt-BR')}
+                  </span>
+                )}
               </div>
             </div>
+
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <span className="text-[9px] font-medium text-slate-500 uppercase tracking-widest hidden md:block">
+                Olá, {user.name.split(' ')[0]} {syncing && <span className="inline-block w-1 h-1 bg-rose-500 rounded-full animate-ping ml-1"></span>}
+              </span>
+              <button 
+                type="button"
+                onClick={() => setCurrentPage('dashboard')}
+                className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase transition-all border ${currentPage === 'dashboard' ? 'bg-rose-500/10 text-rose-500 border-rose-500/20 shadow-sm' : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700'}`}
+              >
+                Painel do Dono
+              </button>
+              <button onClick={onLogout} className="p-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-rose-500 transition-all shadow-sm">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
+              </button>
+            </div>
           </div>
-          <div className="flex items-center gap-4">
-            <nav className="flex bg-slate-950/50 p-1 rounded-2xl border border-slate-800 overflow-x-auto no-scrollbar">
-              {['dashboard', 'dre', 'lancamentos', 'lista', 'conciliacao', 'contas', 'cadastros', 'configuracoes'].map(id => (
+
+          {/* Linha 2: Menu de Navegação */}
+          <div className="w-full">
+            <nav className="flex bg-slate-950/50 p-1 rounded-xl border border-slate-800 overflow-x-auto no-scrollbar">
+              {['dre', 'lancamentos', 'lista', 'conciliacao', 'contas', 'cadastros', 'configuracoes'].map(id => (
                 <button 
                   key={id} type="button" onClick={() => {
                     if (id === 'lista') setGlobalSearchFilter('');
                     setCurrentPage(id as any);
                   }} 
-                  className={`px-4 py-2 rounded-xl text-xs font-bold uppercase transition-all ${currentPage === id ? 'bg-slate-800 text-rose-500 shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}
+                  className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase whitespace-nowrap transition-all ${currentPage === id ? 'bg-slate-800 text-rose-500 shadow-md' : 'text-slate-400 hover:text-slate-200'}`}
                 >
-                  {id === 'dashboard' ? 'Painel do Dono' : id === 'contas' ? 'Plano' : id === 'lista' ? 'Registros' : id === 'conciliacao' ? 'Conciliação' : id === 'configuracoes' ? 'Configurações' : id === 'lancamentos' ? 'Lançamentos' : id}
+                  {id === 'contas' ? 'Plano' : id === 'lista' ? 'Registros' : id === 'conciliacao' ? 'Conciliação' : id === 'configuracoes' ? 'Configurações' : id === 'lancamentos' ? 'Lançamentos' : id}
                 </button>
               ))}
             </nav>
-            <button onClick={onLogout} className="relative z-[100] p-3 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-all cursor-pointer min-w-[50px] min-h-[50px] shadow-2xl">
-              <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
-            </button>
           </div>
         </div>
       </header>

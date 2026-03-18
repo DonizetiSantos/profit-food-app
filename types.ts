@@ -22,6 +22,9 @@ export interface Company {
   name: string;
   document?: string;
   created_at?: string;
+  subscription_status?: 'trial' | 'active' | 'expired' | 'blocked';
+  trial_ends_at?: string;
+  paid_until?: string;
 }
 
 export interface CompanyUser {
