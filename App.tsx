@@ -461,6 +461,41 @@ const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void
     );
   }
 
+  const getTrialBadge = (company: Company) => {
+    if (company.subscription_status !== 'trial' || !company.trial_ends_at) return null;
+
+    const end = new Date(company.trial_ends_at);
+    const now = new Date();
+    
+    // Reset time to compare only dates
+    const endDate = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+    const nowDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    
+    const diffTime = endDate.getTime() - nowDate.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    if (diffDays < 0) return null;
+
+    let text = "";
+    if (diffDays > 1) {
+      text = `FALTAM ${diffDays} DIAS`;
+    } else if (diffDays === 1) {
+      text = "ÚLTIMO DIA DE TESTE";
+    } else {
+      text = "TESTE ENCERRA HOJE";
+    }
+
+    const dateStr = end.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+    
+    return {
+      text,
+      subtext: diffDays > 0 ? `até ${dateStr}` : null,
+      isUrgent: diffDays <= 3
+    };
+  };
+
+  const trialInfo = activeCompany ? getTrialBadge(activeCompany) : null;
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 pb-20 selection:bg-rose-500/30">
       <header className="bg-slate-900/80 backdrop-blur-md border-b border-slate-800 sticky top-0 z-50">
@@ -478,10 +513,17 @@ const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void
                 <span className="text-[10px] font-black text-rose-500 uppercase tracking-widest bg-rose-500/10 px-2 py-0.5 rounded-lg border border-rose-500/20 whitespace-nowrap">
                   {activeCompany.name}
                 </span>
-                {activeCompany.subscription_status === 'trial' && activeCompany.trial_ends_at && (
-                  <span className="text-[9px] font-bold text-emerald-500 uppercase tracking-widest bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 whitespace-nowrap">
-                    Teste até {new Date(activeCompany.trial_ends_at).toLocaleDateString('pt-BR')}
-                  </span>
+                {trialInfo && (
+                  <div className={`flex flex-col items-start px-2 py-1 rounded border whitespace-nowrap leading-none ${trialInfo.isUrgent ? 'bg-amber-500/10 border-amber-500/20 text-amber-500' : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500'}`}>
+                    <span className="text-[9px] font-black uppercase tracking-widest">
+                      {trialInfo.text}
+                    </span>
+                    {trialInfo.subtext && (
+                      <span className="text-[8px] font-bold opacity-80 mt-0.5">
+                        {trialInfo.subtext}
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
