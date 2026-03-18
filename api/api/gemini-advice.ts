@@ -1,7 +1,6 @@
-import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { GoogleGenAI } from "@google/genai";
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: any, res: any) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed. Use POST." });
   }
@@ -32,7 +31,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       },
     });
 
-    return res.status(200).json({ text: response.text || "" });
+    const text = response?.text ?? "";
+
+    return res.status(200).json({ text });
   } catch (err: any) {
     const message = err?.message || "Unknown error";
 
@@ -43,6 +44,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    return res.status(500).json({ error: "Gemini request failed.", details: message });
+    return res.status(500).json({
+      error: "Erro ao gerar análise. Verifique sua conexão ou chave de API.",
+      details: message,
+    });
   }
 }
