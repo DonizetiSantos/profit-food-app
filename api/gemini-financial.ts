@@ -1,4 +1,3 @@
-import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { GoogleGenAI, Type } from "@google/genai";
 
 type Status = "success" | "warning" | "danger";
@@ -6,15 +5,12 @@ type Status = "success" | "warning" | "danger";
 function normalizeStatus(input: any): Status {
   const v = String(input || "").toLowerCase().trim();
 
-  // já está ok
   if (v === "success" || v === "warning" || v === "danger") return v;
 
-  // mapeamentos comuns PT-BR
   if (v.includes("ideal") || v.includes("seguro") || v.includes("ok") || v.includes("bom")) return "success";
   if (v.includes("aten") || v.includes("alert") || v.includes("moder")) return "warning";
   if (v.includes("crít") || v.includes("crit") || v.includes("perig") || v.includes("ruim")) return "danger";
 
-  // fallback padrão
   return "warning";
 }
 
@@ -23,7 +19,7 @@ function ensureArrayOfStrings(x: any): string[] {
   return [];
 }
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: any, res: any) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed. Use POST." });
   }
@@ -69,7 +65,6 @@ REGRAS OBRIGATÓRIAS DE RETORNO:
           type: Type.OBJECT,
           properties: {
             summary: { type: Type.STRING },
-
             kpis: {
               type: Type.ARRAY,
               items: {
@@ -84,7 +79,6 @@ REGRAS OBRIGATÓRIAS DE RETORNO:
                 required: ["label", "value", "status", "benchmark", "description"],
               },
             },
-
             stability: {
               type: Type.OBJECT,
               properties: {
@@ -94,7 +88,6 @@ REGRAS OBRIGATÓRIAS DE RETORNO:
               },
               required: ["breakEven", "safetyMargin", "safetyMarginStatus"],
             },
-
             criticalAlerts: { type: Type.ARRAY, items: { type: Type.STRING } },
             recommendations: { type: Type.ARRAY, items: { type: Type.STRING } },
             healthScore: { type: Type.NUMBER },
@@ -113,7 +106,6 @@ REGRAS OBRIGATÓRIAS DE RETORNO:
       return res.status(502).json({ error: "Model did not return valid JSON.", raw: text });
     }
 
-    // ✅ Normalização defensiva (caso o modelo ainda devolva Ideal/Seguro etc.)
     if (Array.isArray(data?.kpis)) {
       data.kpis = data.kpis.map((k: any) => ({
         ...k,
@@ -142,11 +134,9 @@ REGRAS OBRIGATÓRIAS DE RETORNO:
     if (typeof data?.healthScore !== "number" || Number.isNaN(data.healthScore)) {
       data.healthScore = 0;
     } else {
-      // clamp 0..100
       data.healthScore = Math.max(0, Math.min(100, data.healthScore));
     }
 
-    // Garantia mínima do summary
     if (typeof data?.summary !== "string") data.summary = "";
 
     return res.status(200).json(data);
