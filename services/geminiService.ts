@@ -36,7 +36,7 @@ export const getFinancialAdvice = async (transactions: Transaction[], categories
   `;
 
   try {
-    const response = await fetch('/api/analyze', {
+    const response = await fetch('/api/gemini-financial', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -140,7 +140,7 @@ export const getDetailedFinancialAnalysis = async (dreData: any, dashboardStats:
   `;
 
   try {
-    const response = await fetch('/api/analyze', {
+    const response = await fetch('/api/gemini-financial', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
