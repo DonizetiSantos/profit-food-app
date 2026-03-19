@@ -60,9 +60,12 @@ export const getFinancialAdvice = async (transactions: Transaction[], categories
 
 export const getDetailedFinancialAnalysis = async (dreData: any, dashboardStats: any, period: string): Promise<FinancialAnalysisData> => {
   const prompt = `
-    Como o Assistente de Diagnóstico Financeiro ProfitFood, elabore um PARECER CONSULTIVO PREMIUM para ${period}.
-    Seu objetivo é elevar o valor percebido da entrega, traduzindo dados em dinheiro e urgência operacional.
+    Como o Assistente de Diagnóstico Financeiro ProfitFood, elabore um PARECER CONSULTIVO PREMIUM de nível sênior para o período ${period}.
 
+    Seu objetivo NÃO é descrever números.
+    Seu objetivo é EXPOR a realidade financeira da operação, traduzindo tudo em dinheiro, impacto e decisão.
+
+    ----------------------------------------
     DADOS DO PERÍODO:
     - Vendas Brutas: R$ ${dreData.faturamentoBruto}
     - Impostos: R$ ${dreData.impostos}
@@ -74,7 +77,8 @@ export const getDetailedFinancialAnalysis = async (dreData: any, dashboardStats:
     - Resultado Líquido: R$ ${dreData.resultadoLiquido}
     - Outras Saídas (Dívidas/Amortização): R$ ${dreData.saidasNaoOperacionais}
 
-    TABELA DE BENCHMARKS PROFITFOOD (USE PARA CLASSIFICAR STATUS):
+    ----------------------------------------
+    BENCHMARKS PROFIT FOOD (OBRIGATÓRIO USAR):
     - CMV: Ideal <= 35% | Atenção 35.1-38% | Crítico > 38%
     - Margem de Contribuição (%): Ideal >= 40% | Atenção 37-39.9% | Crítico < 37%
     - Pessoal / Vendas Brutas: Ideal <= 25% | Atenção 25.1-28% | Crítico > 28%
@@ -82,51 +86,109 @@ export const getDetailedFinancialAnalysis = async (dreData: any, dashboardStats:
     - Margem de Segurança (%): Seguro > 20% | Atenção 10-20% | Crítico < 10%
     - Lucratividade: Ideal > 10% | Crítico < 7%
 
-    REGRAS OBRIGATÓRIAS DE CONTEÚDO:
+    ----------------------------------------
+    REGRAS CRÍTICAS (NÃO IGNORAR):
 
-    1. IMPACTO FINANCEIRO EM R$:
-       Sempre que um indicador estiver fora do ideal, inclua o impacto financeiro estimado em reais.
-       Cálculo: Vendas Brutas * (valor atual % - benchmark ideal %).
-       Linguagem obrigatória: "Esse desvio representa um impacto financeiro estimado de aproximadamente R$ X no resultado do período."
+    1. IMPACTO EM DINHEIRO (OBRIGATÓRIO)
+    Sempre que um indicador estiver fora do ideal:
+    - Calcule o impacto financeiro REAL (NÃO arredonde)
+    - Fórmula: Vendas Brutas * (desvio percentual)
+    - Use números específicos (ex: R$ 7.842, não R$ 8.000)
 
-    2. SUMMARY (PARECER CONSULTIVO):
-       Estrutura: 1. Visão geral do período; 2. Principal alerta; 3. Impacto em R$; 4. Consequência para margem/lucro/caixa; 5. Fechamento estratégico.
+    Frase obrigatória:
+    "Esse desvio representa aproximadamente R$ X no resultado do período."
 
-    3. SCORE GERAL (healthScore):
-       Gere um 'scoreExplanation' baseado na faixa:
-       - 0-39: "O score geral indica uma operação em risco elevado, com múltiplos indicadores pressionando margem e estrutura."
-       - 40-69: "O score geral posiciona o negócio em zona de atenção, com sinais de desequilíbrio que exigem ação corretiva."
-       - 70-100: "O score geral indica uma operação saudável, com boa capacidade de absorção de custos e geração de resultado."
+    ----------------------------------------
 
-    4. O QUE ACONTECE SE NADA FOR FEITO (whatIfNothingIsDone):
-       Explique as consequências práticas da manutenção dos desvios. Traduza em perda de margem/caixa.
-       Inclua impacto estimado mensal e anual.
-       Ex: "Se nada for feito, o desvio atual do CMV pode continuar consumindo aproximadamente R$ X por mês do resultado, o que representa R$ Y ao ano em perda de eficiência operacional."
+    2. SUMMARY (PARECER EXECUTIVO – FORTE)
+    Estrutura obrigatória:
+    1. Situação geral
+    2. Principal problema
+    3. Impacto em R$
+    4. Consequência real (lucro / caixa / risco)
+    5. Frase de fechamento estratégica (tom firme)
 
-    5. OPORTUNIDADE DE RECUPERAÇÃO (recoveryOpportunity):
-       Estimativa do quanto pode ser recuperado se as ações forem implementadas.
-       Ex: "Com a correção dos principais desvios identificados, existe potencial de recuperação de aproximadamente R$ X por mês no resultado operacional."
+    Evite linguagem neutra.
+    Use linguagem de decisão.
 
-    6. KPIs - TEXTO FORTE:
-       Se fora do ideal: mencione benchmark, impacto no resultado e consequência operacional.
-       Se saudável: destaque que protege a operação e reforça disciplina.
+    ----------------------------------------
 
-    7. PLANO DE AÇÃO:
-       Conecte ação com dinheiro. Cada recomendação deve conter: Ação prática + Problema que corrige + Potencial de recuperação em R$ + Consequência positiva.
+    3. SCORE (EXPLICAÇÃO)
+    Baseie na nota (0–100):
+    0–39 → operação em risco real
+    40–69 → operação em atenção com desequilíbrios
+    70–100 → operação saudável e controlada
 
-    8. REGRAS DE LINGUAGEM:
-       - Tom consultivo, executivo, claro e profissional.
-       - NÃO usar linguagem alarmista ou sensacionalista.
-       - NÃO afirmar valores como exatos -> sempre usar: "impacto estimado" ou "potencial de ganho".
+    ----------------------------------------
 
-    ESTRUTURA JSON ESPERADA:
+    4. O QUE ACONTECE SE NADA FOR FEITO
+    - Traduza em PERDA MENSAL e ANUAL
+    - Sempre usar dinheiro
+    Exemplo: "Esse cenário pode consumir aproximadamente R$ X/mês, acumulando R$ Y/ano."
+
+    ----------------------------------------
+
+    5. OPORTUNIDADE DE RECUPERAÇÃO
+    - Some os principais desvios
+    - Mostre quanto pode ser recuperado/mês
+
+    ----------------------------------------
+
+    6. KPIs (NÍVEL PROFISSIONAL)
+    Para cada KPI:
+    SE estiver fora:
+    - mostrar benchmark
+    - mostrar impacto em R$
+    - mostrar consequência real
+    SE estiver saudável:
+    - mostrar que protege o lucro
+    Proibido resposta genérica.
+
+    ----------------------------------------
+
+    7. PLANO DE AÇÃO (NÍVEL CIRÚRGICO)
+    Cada recomendação DEVE conter:
+    - ação prática específica
+    - problema que corrige
+    - impacto estimado em R$
+    - consequência positiva
+    Exemplo: "Ajustar preços em +3% nos itens de maior giro pode recuperar aproximadamente R$ X/mês, corrigindo a pressão de margem."
+
+    ----------------------------------------
+
+    8. PRIORIZAÇÃO (OBRIGATÓRIO)
+    Ordene as ações por impacto financeiro (maior primeiro)
+
+    ----------------------------------------
+
+    9. ALERTAS CRÍTICOS
+    Seja direto e firme, sem alarmismo.
+
+    ----------------------------------------
+
+    10. TOM DE LINGUAGEM
+    - Consultivo
+    - Executivo
+    - Claro
+    - Sem enrolação
+    - Sem exagero emocional
+
+    ----------------------------------------
+
+    ESTRUTURA JSON (OBRIGATÓRIA):
     {
       "summary": "string",
       "scoreExplanation": "string",
       "whatIfNothingIsDone": "string",
       "recoveryOpportunity": "string",
       "kpis": [
-        { "label": "string", "value": "string", "status": "success|warning|danger", "benchmark": "string", "description": "string" }
+        {
+          "label": "string",
+          "value": "string",
+          "status": "success|warning|danger",
+          "benchmark": "string",
+          "description": "string"
+        }
       ],
       "stability": {
         "breakEven": "string",
