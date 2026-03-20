@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { PaymentSettlementRule, Bank } from '../types';
 import { supabase } from '../src/lib/supabase';
 import { useActiveCompany } from '../src/contexts/CompanyContext';
@@ -28,6 +28,17 @@ const TAB_LABELS: Record<TabKey, string> = {
   balances: 'Saldos Iniciais',
 };
 
+const CORE_PAYMENT_METHODS = [
+  'DINHEIRO',
+  'PIX',
+  'BOLETO',
+  'CARTÃO CRÉDITO',
+  'CARTÃO DÉBITO',
+  'VOUCHER',
+  'APLICATIVO',
+  'OUTROS',
+] as const;
+
 const normalizeText = (value: string | null | undefined) =>
   String(value || '')
     .trim()
@@ -35,14 +46,15 @@ const normalizeText = (value: string | null | undefined) =>
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
 
-const isCardMethod = (rule: RuleRow) => {
-  const methodName = normalizeText(rule.payment_methods?.name);
-  return methodName.includes('cartao') || methodName.includes('cartão');
-};
+const CORE_METHOD_SET = new Set(CORE_PAYMENT_METHODS.map((method) => normalizeText(method)));
+const CARD_CORE_METHOD_SET = new Set([
+  normalizeText('CARTÃO CRÉDITO'),
+  normalizeText('CARTÃO DÉBITO'),
+]);
 
 const sortRules = (items: RuleRow[]) => {
   return [...items].sort((a, b) => {
-    const methodCompare = (a.payment_methods?.name || '').localeCompare(b.payment_methods?.name || '');
+    const methodCompare = (a.payment_methods?.name || '').localeCompare(b.payment_methods?.name || '', 'pt-BR');
     if (methodCompare !== 0) return methodCompare;
 
     const aSpecificity = `${a.card_brand || ''} ${a.acquirer_name || ''}`.trim();
@@ -51,17 +63,14 @@ const sortRules = (items: RuleRow[]) => {
     if (!aSpecificity && bSpecificity) return -1;
     if (aSpecificity && !bSpecificity) return 1;
 
-    return aSpecificity.localeCompare(bSpecificity);
+    return aSpecificity.localeCompare(bSpecificity, 'pt-BR');
   });
 };
 
-const ScrollTableShell: React.FC<{
-  children: React.ReactNode;
-  minWidth: string;
-}> = ({ children, minWidth }) => {
+const ScrollTableShell: React.FC<{ children: React.ReactNode; minWidth: string }> = ({ children, minWidth }) => {
   return (
-    <div className="relative bg-slate-900 rounded-[2rem] border border-slate-800 overflow-hidden shadow-2xl">
-      <div className="relative overflow-auto custom-scrollbar max-h-[68vh]">
+    <div className="bg-slate-900 rounded-[2rem] border border-slate-800 overflow-hidden shadow-2xl">
+      <div className="overflow-auto custom-scrollbar max-h-[68vh]">
         <div style={{ minWidth }}>{children}</div>
       </div>
     </div>
@@ -75,8 +84,15 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [cleaningLegacy, setCleaningLegacy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+
+  const getMethodName = (rule: RuleRow) =>
+    rule.payment_methods?.name || paymentMethods.find((method) => method.id === rule.payment_method_id)?.name || 'Desconhecido';
+
+  const isCoreMethodRule = (rule: RuleRow) => CORE_METHOD_SET.has(normalizeText(getMethodName(rule)));
+  const isCardMethodRule = (rule: RuleRow) => CARD_CORE_METHOD_SET.has(normalizeText(getMethodName(rule)));
 
   useEffect(() => {
     const loadData = async () => {
@@ -120,13 +136,14 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
           isNew: false,
         }));
 
+        const baseMethods = loadedMethods.filter((method) => CORE_METHOD_SET.has(normalizeText(method.name)));
         const genericRuleMethodIds = new Set(
           existingRules
-            .filter((r) => !r.card_brand && !r.acquirer_name)
-            .map((r) => r.payment_method_id)
+            .filter((rule) => !rule.card_brand && !rule.acquirer_name)
+            .map((rule) => rule.payment_method_id)
         );
 
-        const missingGenericRules: RuleRow[] = loadedMethods
+        const missingGenericRules: RuleRow[] = baseMethods
           .filter((method) => !genericRuleMethodIds.has(method.id))
           .map((method) => ({
             id: crypto.randomUUID(),
@@ -159,37 +176,27 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
   }, [activeCompany]);
 
   const genericRules = useMemo(() => {
-    return sortRules(rules.filter((rule) => !rule.card_brand && !rule.acquirer_name));
-  }, [rules]);
-
-  const cardSpecificRules = useMemo(() => {
-    return sortRules(
-      rules.filter((rule) => (rule.card_brand || rule.acquirer_name) && isCardMethod(rule))
-    );
-  }, [rules]);
+    return sortRules(rules.filter((rule) => !rule.card_brand && !rule.acquirer_name && isCoreMethodRule(rule)));
+  }, [rules, paymentMethods]);
 
   const genericCardRules = useMemo(() => {
-    return sortRules(
-      rules.filter((rule) => !rule.card_brand && !rule.acquirer_name && isCardMethod(rule))
-    );
-  }, [rules]);
+    return sortRules(rules.filter((rule) => !rule.card_brand && !rule.acquirer_name && isCardMethodRule(rule)));
+  }, [rules, paymentMethods]);
 
-  const specificRuleCountByMethodId = useMemo(() => {
-    const counts = new Map<string, number>();
+  const cardSpecificRules = useMemo(() => {
+    return sortRules(rules.filter((rule) => (!!rule.card_brand || !!rule.acquirer_name) && isCardMethodRule(rule)));
+  }, [rules, paymentMethods]);
 
-    for (const rule of cardSpecificRules) {
-      counts.set(rule.payment_method_id, (counts.get(rule.payment_method_id) || 0) + 1);
-    }
+  const legacyRules = useMemo(() => {
+    return sortRules(rules.filter((rule) => !isCoreMethodRule(rule)));
+  }, [rules, paymentMethods]);
 
-    return counts;
-  }, [cardSpecificRules]);
+  const legacyGenericRules = useMemo(() => {
+    return legacyRules.filter((rule) => !rule.card_brand && !rule.acquirer_name);
+  }, [legacyRules]);
 
   const handleUpdateRule = (id: string, field: keyof RuleRow, value: any) => {
-    setRules((prev) =>
-      prev.map((rule) =>
-        rule.id === id ? { ...rule, [field]: value } : rule
-      )
-    );
+    setRules((prev) => prev.map((rule) => (rule.id === id ? { ...rule, [field]: value } : rule)));
     setSuccess(false);
     setError(null);
   };
@@ -197,11 +204,7 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
   const handleAddSpecificRule = (baseRule: RuleRow) => {
     if (!activeCompany) return;
 
-    const methodName =
-      baseRule.payment_methods?.name ||
-      paymentMethods.find((m) => m.id === baseRule.payment_method_id)?.name ||
-      'Desconhecido';
-
+    const methodName = getMethodName(baseRule);
     const newRule: RuleRow = {
       id: crypto.randomUUID(),
       company_id: activeCompany.id,
@@ -232,46 +235,91 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
     setError(null);
   };
 
-  const handleDeleteRule = async (rule: RuleRow) => {
-    if (rule.isNew) {
-      handleRemoveUnsavedRule(rule.id);
-      return;
-    }
-
-    const confirmed = window.confirm(
-      `Deseja desativar a regra de ${rule.payment_methods?.name || 'cartão'}${
-        rule.card_brand || rule.acquirer_name
-          ? ` (${[rule.card_brand, rule.acquirer_name].filter(Boolean).join(' / ')})`
-          : ''
-      }?`
-    );
-
+  const handleDeleteSavedRule = async (id: string) => {
+    const confirmed = window.confirm('Deseja desativar esta regra salva?');
     if (!confirmed) return;
 
-    setSaving(true);
+    setRules((prev) => prev.filter((rule) => rule.id !== id));
+    setSuccess(false);
+    setError(null);
+
+    try {
+      const { error: deactivateError } = await supabase
+        .from('payment_settlement_rules')
+        .update({ is_active: false, updated_at: new Date().toISOString() })
+        .eq('id', id);
+
+      if (deactivateError) throw deactivateError;
+    } catch (err: any) {
+      console.error('Erro ao desativar regra:', err);
+      setError(err?.message || 'Não foi possível desativar a regra.');
+    }
+  };
+
+  const handleDeactivateLegacyRules = async () => {
+    if (!activeCompany || legacyRules.length === 0) return;
+
+    const confirmed = window.confirm(
+      'Isso vai desativar todas as regras ligadas a meios legados fora do padrão. Deseja continuar?'
+    );
+    if (!confirmed) return;
+
+    setCleaningLegacy(true);
     setError(null);
     setSuccess(false);
 
     try {
-      const { error: updateError } = await supabase
-        .from('payment_settlement_rules')
-        .update({
-          is_active: false,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', rule.id)
-        .eq('company_id', activeCompany?.id || '');
+      const savedLegacyIds = legacyRules.filter((rule) => !rule.isNew).map((rule) => rule.id);
 
-      if (updateError) throw updateError;
+      if (savedLegacyIds.length > 0) {
+        const { error: deactivateError } = await supabase
+          .from('payment_settlement_rules')
+          .update({ is_active: false, updated_at: new Date().toISOString() })
+          .in('id', savedLegacyIds);
 
-      setRules((prev) => prev.filter((currentRule) => currentRule.id !== rule.id));
+        if (deactivateError) throw deactivateError;
+      }
+
+      setRules((prev) => prev.filter((rule) => isCoreMethodRule(rule)));
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err: any) {
-      console.error('Erro ao desativar regra:', err);
-      setError(err?.message || 'Não foi possível desativar a regra.');
+      console.error('Erro ao limpar regras legadas:', err);
+      setError(err?.message || 'Não foi possível desativar as regras legadas.');
     } finally {
-      setSaving(false);
+      setCleaningLegacy(false);
+    }
+  };
+
+  const validateRules = (rows: RuleRow[]) => {
+    const duplicateKeys = new Set<string>();
+    const seenKeys = new Set<string>();
+
+    for (const rule of rows) {
+      if (!isCoreMethodRule(rule)) continue;
+
+      const key = [
+        rule.payment_method_id,
+        normalizeText(rule.card_brand),
+        normalizeText(rule.acquirer_name),
+      ].join('|');
+
+      if (seenKeys.has(key)) {
+        duplicateKeys.add(key);
+      }
+      seenKeys.add(key);
+    }
+
+    if (duplicateKeys.size > 0) {
+      throw new Error('Existem regras duplicadas com o mesmo meio, bandeira e operadora.');
+    }
+
+    for (const rule of rows) {
+      if (isCardMethodRule(rule) && (!!rule.card_brand || !!rule.acquirer_name)) {
+        if (!normalizeText(rule.card_brand) && !normalizeText(rule.acquirer_name)) {
+          throw new Error('Toda regra específica de cartão precisa ter bandeira ou operadora.');
+        }
+      }
     }
   };
 
@@ -283,65 +331,21 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
     setSuccess(false);
 
     try {
+      validateRules(rules);
       const now = new Date().toISOString();
-
-      const invalidSpecificRule = rules.find((rule) => {
-        if (!isCardMethod(rule)) return false;
-        const hasSpecificData = !!normalizeText(rule.card_brand) || !!normalizeText(rule.acquirer_name);
-        const isGeneric = !normalizeText(rule.card_brand) && !normalizeText(rule.acquirer_name);
-        return !isGeneric && !hasSpecificData;
-      });
-
-      if (invalidSpecificRule) {
-        throw new Error('Existe regra específica de cartão sem bandeira e sem operadora.');
-      }
-
-      const duplicateSpecificRule = (() => {
-        const signatures = new Set<string>();
-
-        for (const rule of rules) {
-          if (!isCardMethod(rule)) continue;
-
-          const brand = normalizeText(rule.card_brand);
-          const acquirer = normalizeText(rule.acquirer_name);
-          const signature = `${rule.payment_method_id}::${brand}::${acquirer}`;
-
-          if (signatures.has(signature)) {
-            return rule;
-          }
-
-          signatures.add(signature);
-        }
-
-        return null;
-      })();
-
-      if (duplicateSpecificRule) {
-        throw new Error(
-          `Há regras duplicadas para ${duplicateSpecificRule.payment_methods?.name || 'cartão'}. Revise bandeira e operadora antes de salvar.`
-        );
-      }
 
       const { data: existingRows, error: existingRowsError } = await supabase
         .from('payment_settlement_rules')
         .select('id')
         .eq('company_id', activeCompany.id);
 
-      if (existingRowsError) {
-        throw existingRowsError;
-      }
+      if (existingRowsError) throw existingRowsError;
 
-      const existingIds = new Set(
-        ((existingRows as { id: string }[]) || []).map((row) => row.id)
-      );
+      const existingIds = new Set(((existingRows as { id: string }[]) || []).map((row) => row.id));
 
-      const normalizedRules = rules.map(({ payment_methods, isNew, ...rule }) => {
-        const cardMethod = isCardMethod({
-          ...rule,
-          payment_methods,
-        } as RuleRow);
-
-        return {
+      const normalizedRules = rules
+        .filter((rule) => isCoreMethodRule(rule))
+        .map(({ payment_methods, isNew, ...rule }) => ({
           ...rule,
           company_id: activeCompany.id,
           payment_method_id: rule.payment_method_id,
@@ -351,12 +355,15 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
           fee_percent: Number(rule.fee_percent) || 0,
           fee_fixed: Number(rule.fee_fixed) || 0,
           default_bank_id: rule.default_bank_id || null,
-          card_brand: cardMethod ? ((rule.card_brand || '').trim() || null) : null,
-          acquirer_name: cardMethod ? ((rule.acquirer_name || '').trim() || null) : null,
+          card_brand: isCardMethodRule({ ...rule, payment_methods } as RuleRow)
+            ? ((rule.card_brand || '').trim() || null)
+            : null,
+          acquirer_name: isCardMethodRule({ ...rule, payment_methods } as RuleRow)
+            ? ((rule.acquirer_name || '').trim() || null)
+            : null,
           notes: rule.notes || '',
           is_active: rule.is_active ?? true,
-        };
-      });
+        }));
 
       const rulesToInsert = normalizedRules
         .filter((rule) => !existingIds.has(rule.id))
@@ -373,10 +380,7 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
         }));
 
       if (rulesToInsert.length > 0) {
-        const { error: insertError } = await supabase
-          .from('payment_settlement_rules')
-          .insert(rulesToInsert);
-
+        const { error: insertError } = await supabase.from('payment_settlement_rules').insert(rulesToInsert);
         if (insertError) throw insertError;
       }
 
@@ -388,18 +392,12 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
         if (updateError) throw updateError;
       }
 
-      setRules((prev) => prev.map((rule) => ({ ...rule, isNew: false })));
+      setRules((prev) => sortRules(prev.filter((rule) => isCoreMethodRule(rule)).map((rule) => ({ ...rule, isNew: false }))));
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err: any) {
       console.error('Erro ao salvar premissas:', err);
-
-      const databaseMessage =
-        err?.message ||
-        err?.details ||
-        err?.hint ||
-        'Erro desconhecido ao salvar premissas financeiras.';
-
+      const databaseMessage = err?.message || err?.details || err?.hint || 'Erro desconhecido ao salvar premissas financeiras.';
       setError(`Erro ao salvar as alterações: ${databaseMessage}`);
     } finally {
       setSaving(false);
@@ -407,156 +405,109 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
   };
 
   const renderGeneralTable = () => (
-    <ScrollTableShell minWidth="980px">
-      <table className="w-full text-left border-collapse">
-        <thead className="sticky top-0 z-20 bg-slate-950">
-          <tr className="bg-slate-950 text-slate-500 text-[8px] uppercase tracking-[0.18em] font-black border-b border-slate-800">
-            <th className="px-6 py-4">Meio de Pagamento</th>
-            <th className="px-3 py-4 text-center">Prazo</th>
-            <th className="px-3 py-4 text-center">Mesmo Dia?</th>
-            <th className="px-3 py-4 text-center">Status</th>
-            <th className="px-3 py-4 text-center">Taxa %</th>
-            <th className="px-3 py-4 text-center">Taxa Fixa</th>
-            <th className="px-4 py-4">Observações</th>
-            <th className="px-4 py-4 text-center">Ações</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-800/50">
-          {genericRules.map((rule) => {
-            const cardMethod = isCardMethod(rule);
-            const specificCount = specificRuleCountByMethodId.get(rule.payment_method_id) || 0;
+    <div className="space-y-4">
+      {legacyGenericRules.length > 0 && (
+        <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-amber-400 mb-2">Cadastros legados fora do padrão</p>
+            <p className="text-sm text-amber-100 leading-relaxed">
+              Existem regras genéricas ligadas a meios específicos antigos, como combinações de bandeira e operadora. O modelo correto agora é manter na aba geral apenas os meios base.
+            </p>
+          </div>
+          <button
+            onClick={handleDeactivateLegacyRules}
+            disabled={cleaningLegacy}
+            className={`px-4 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${
+              cleaningLegacy ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30'
+            }`}
+          >
+            {cleaningLegacy ? 'Limpando...' : 'Desativar regras legadas'}
+          </button>
+        </div>
+      )}
 
-            return (
+      <ScrollTableShell minWidth="980px">
+        <table className="w-full text-left border-collapse">
+          <thead className="sticky top-0 z-20">
+            <tr className="bg-slate-950 text-slate-500 text-[8px] uppercase tracking-[0.18em] font-black border-b border-slate-800">
+              <th className="px-6 py-4">Meio de Pagamento</th>
+              <th className="px-3 py-4 text-center">Prazo</th>
+              <th className="px-3 py-4 text-center">Mesmo Dia?</th>
+              <th className="px-3 py-4 text-center">Status</th>
+              <th className="px-3 py-4 text-center">Taxa %</th>
+              <th className="px-3 py-4 text-center">Taxa Fixa</th>
+              <th className="px-4 py-4">Observações</th>
+              <th className="px-4 py-4 text-center">Ações</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-800/50">
+            {genericRules.map((rule) => (
               <tr key={rule.id} className="hover:bg-slate-800/20 transition-colors">
-                <td className="px-6 py-3 align-middle">
+                <td className="px-6 py-4 align-middle">
                   <div className="flex flex-col gap-0.5 leading-tight">
-                    <span className="text-[11px] font-black text-slate-200 uppercase tracking-tight">
-                      {rule.payment_methods?.name || 'Desconhecido'}
-                    </span>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-[8px] font-black uppercase tracking-widest text-cyan-400">
-                        Regra Genérica
-                      </span>
-                      {cardMethod && specificCount > 0 && (
-                        <span className="text-[8px] font-black uppercase tracking-widest text-amber-400">
-                          {specificCount} específica{specificCount > 1 ? 's' : ''} ativa{specificCount > 1 ? 's' : ''}
-                        </span>
-                      )}
-                    </div>
+                    <span className="text-[11px] font-black text-slate-200 uppercase tracking-tight">{getMethodName(rule)}</span>
+                    <span className="text-[8px] font-black uppercase tracking-widest text-cyan-400">Regra Genérica</span>
                   </div>
                 </td>
 
-                <td className="px-3 py-3 text-center">
-                  <input
-                    type="number"
-                    value={rule.settlement_days}
-                    onChange={(e) =>
-                      handleUpdateRule(rule.id, 'settlement_days', parseInt(e.target.value, 10) || 0)
-                    }
-                    className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
-                  />
+                <td className="px-3 py-4 text-center">
+                  <input type="number" value={rule.settlement_days} onChange={(e) => handleUpdateRule(rule.id, 'settlement_days', parseInt(e.target.value, 10) || 0)} className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center" />
                 </td>
 
-                <td className="px-3 py-3 text-center">
+                <td className="px-3 py-4 text-center">
                   <div className="flex flex-col items-center gap-1">
-                    <button
-                      onClick={() =>
-                        handleUpdateRule(rule.id, 'receives_same_day', !rule.receives_same_day)
-                      }
-                      className={`w-11 h-5 rounded-full p-0.5 transition-all duration-300 relative ${
-                        rule.receives_same_day ? 'bg-rose-600' : 'bg-slate-800'
-                      }`}
-                    >
-                      <div
-                        className={`w-4 h-4 bg-white rounded-full shadow-md transition-all duration-300 ${
-                          rule.receives_same_day ? 'translate-x-6' : 'translate-x-0'
-                        }`}
-                      ></div>
+                    <button onClick={() => handleUpdateRule(rule.id, 'receives_same_day', !rule.receives_same_day)} className={`w-11 h-5 rounded-full p-0.5 transition-all duration-300 relative ${rule.receives_same_day ? 'bg-rose-600' : 'bg-slate-800'}`}>
+                      <div className={`w-4 h-4 bg-white rounded-full shadow-md transition-all duration-300 ${rule.receives_same_day ? 'translate-x-6' : 'translate-x-0'}`}></div>
                     </button>
-                    {rule.receives_same_day && (
-                      <span className="text-[7px] font-black text-rose-500 uppercase tracking-tighter">
-                        D+0
-                      </span>
-                    )}
+                    {rule.receives_same_day && <span className="text-[7px] font-black text-rose-500 uppercase tracking-tighter">D+0</span>}
                   </div>
                 </td>
 
-                <td className="px-3 py-3 text-center">
-                  <select
-                    value={rule.default_status}
-                    onChange={(e) => handleUpdateRule(rule.id, 'default_status', e.target.value)}
-                    className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-[9px] font-black text-slate-300 outline-none focus:border-rose-500 transition-all uppercase tracking-wider w-[132px]"
-                  >
+                <td className="px-3 py-4 text-center">
+                  <select value={rule.default_status} onChange={(e) => handleUpdateRule(rule.id, 'default_status', e.target.value)} className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-[9px] font-black text-slate-300 outline-none focus:border-rose-500 transition-all uppercase tracking-wider w-[132px]">
                     <option value="LIQUIDADO">LIQUIDADO</option>
                     <option value="PROVISIONADO">PROVISIONADO</option>
                   </select>
                 </td>
 
-                <td className="px-3 py-3 text-center">
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={rule.fee_percent}
-                    onChange={(e) =>
-                      handleUpdateRule(rule.id, 'fee_percent', parseFloat(e.target.value) || 0)
-                    }
-                    className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
-                  />
+                <td className="px-3 py-4 text-center">
+                  <input type="number" step="0.01" value={rule.fee_percent} onChange={(e) => handleUpdateRule(rule.id, 'fee_percent', parseFloat(e.target.value) || 0)} className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center" />
                 </td>
 
-                <td className="px-3 py-3 text-center">
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={rule.fee_fixed}
-                    onChange={(e) =>
-                      handleUpdateRule(rule.id, 'fee_fixed', parseFloat(e.target.value) || 0)
-                    }
-                    className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
-                  />
+                <td className="px-3 py-4 text-center">
+                  <input type="number" step="0.01" value={rule.fee_fixed} onChange={(e) => handleUpdateRule(rule.id, 'fee_fixed', parseFloat(e.target.value) || 0)} className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center" />
                 </td>
 
-                <td className="px-4 py-3">
-                  <input
-                    type="text"
-                    value={rule.notes || ''}
-                    onChange={(e) => handleUpdateRule(rule.id, 'notes', e.target.value)}
-                    placeholder="Notas..."
-                    className="w-full min-w-[150px] bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-[11px] font-medium text-slate-400 outline-none focus:border-rose-500 transition-all"
-                  />
+                <td className="px-4 py-4">
+                  <input type="text" value={rule.notes || ''} onChange={(e) => handleUpdateRule(rule.id, 'notes', e.target.value)} placeholder="Notas..." className="w-full min-w-[150px] bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[11px] font-medium text-slate-400 outline-none focus:border-rose-500 transition-all" />
                 </td>
 
-                <td className="px-4 py-3 text-center">
-                  {cardMethod ? (
-                    <button
-                      onClick={() => handleAddSpecificRule(rule)}
-                      className="px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest bg-slate-800 hover:bg-slate-700 text-cyan-400 transition-all whitespace-nowrap"
-                    >
+                <td className="px-4 py-4 text-center">
+                  {isCardMethodRule(rule) ? (
+                    <button onClick={() => handleAddSpecificRule(rule)} className="px-2.5 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest bg-slate-800 hover:bg-slate-700 text-cyan-400 transition-all whitespace-nowrap">
                       + Regra específica
                     </button>
                   ) : (
-                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-600">
-                      —
-                    </span>
+                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-600">—</span>
                   )}
                 </td>
               </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </ScrollTableShell>
+            ))}
+          </tbody>
+        </table>
+      </ScrollTableShell>
+    </div>
   );
 
   const renderCardsTable = () => (
     <div className="space-y-4">
       <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 px-4 py-3 text-sm text-cyan-200">
-        Aqui ficam apenas as regras específicas de cartões. Preencha pelo menos <strong>bandeira</strong> ou <strong>operadora</strong>. Quando existir regra específica, ela tem prioridade sobre a genérica. A genérica entra só como fallback.
+        Aqui ficam apenas as regras específicas de cartões sobre os meios base <strong>Cartão Crédito</strong> e <strong>Cartão Débito</strong>. Use <strong>bandeira</strong> e/ou <strong>operadora</strong> para especializar a regra.
       </div>
 
       <ScrollTableShell minWidth="1180px">
         <table className="w-full text-left border-collapse">
-          <thead className="sticky top-0 z-20 bg-slate-950">
+          <thead className="sticky top-0 z-20">
             <tr className="bg-slate-950 text-slate-500 text-[8px] uppercase tracking-[0.18em] font-black border-b border-slate-800">
               <th className="px-6 py-4">Meio de Pagamento</th>
               <th className="px-3 py-4 text-center">Bandeira</th>
@@ -573,132 +524,64 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
           <tbody className="divide-y divide-slate-800/50">
             {cardSpecificRules.length === 0 ? (
               <tr>
-                <td colSpan={10} className="px-6 py-10 text-center text-sm font-semibold text-slate-500">
-                  Nenhuma regra específica de cartão cadastrada ainda.
-                </td>
+                <td colSpan={10} className="px-6 py-10 text-center text-sm font-semibold text-slate-500">Nenhuma regra específica de cartão cadastrada ainda.</td>
               </tr>
             ) : (
               cardSpecificRules.map((rule) => (
                 <tr key={rule.id} className="hover:bg-slate-800/20 transition-colors">
-                  <td className="px-6 py-3">
+                  <td className="px-6 py-4">
                     <div className="flex flex-col gap-0.5 leading-tight">
-                      <span className="text-[11px] font-black text-slate-200 uppercase tracking-tight">
-                        {rule.payment_methods?.name || 'Desconhecido'}
-                      </span>
-                      <span className="text-[8px] font-black uppercase tracking-widest text-amber-400">
-                        Regra Específica
-                      </span>
+                      <span className="text-[11px] font-black text-slate-200 uppercase tracking-tight">{getMethodName(rule)}</span>
+                      <span className="text-[8px] font-black uppercase tracking-widest text-amber-400">Regra Específica</span>
                     </div>
                   </td>
 
-                  <td className="px-3 py-3 text-center">
-                    <input
-                      type="text"
-                      value={rule.card_brand || ''}
-                      onChange={(e) => handleUpdateRule(rule.id, 'card_brand', e.target.value)}
-                      placeholder="VISA"
-                      className="w-24 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center uppercase"
-                    />
+                  <td className="px-3 py-4 text-center">
+                    <input type="text" value={rule.card_brand || ''} onChange={(e) => handleUpdateRule(rule.id, 'card_brand', e.target.value.toUpperCase())} placeholder="VISA" className="w-24 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center uppercase" />
                   </td>
 
-                  <td className="px-3 py-3 text-center">
-                    <input
-                      type="text"
-                      value={rule.acquirer_name || ''}
-                      onChange={(e) => handleUpdateRule(rule.id, 'acquirer_name', e.target.value)}
-                      placeholder="STONE"
-                      className="w-28 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center uppercase"
-                    />
+                  <td className="px-3 py-4 text-center">
+                    <input type="text" value={rule.acquirer_name || ''} onChange={(e) => handleUpdateRule(rule.id, 'acquirer_name', e.target.value.toUpperCase())} placeholder="STONE" className="w-28 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center uppercase" />
                   </td>
 
-                  <td className="px-3 py-3 text-center">
-                    <input
-                      type="number"
-                      value={rule.settlement_days}
-                      onChange={(e) =>
-                        handleUpdateRule(rule.id, 'settlement_days', parseInt(e.target.value, 10) || 0)
-                      }
-                      className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
-                    />
+                  <td className="px-3 py-4 text-center">
+                    <input type="number" value={rule.settlement_days} onChange={(e) => handleUpdateRule(rule.id, 'settlement_days', parseInt(e.target.value, 10) || 0)} className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center" />
                   </td>
 
-                  <td className="px-3 py-3 text-center">
+                  <td className="px-3 py-4 text-center">
                     <div className="flex flex-col items-center gap-1">
-                      <button
-                        onClick={() =>
-                          handleUpdateRule(rule.id, 'receives_same_day', !rule.receives_same_day)
-                        }
-                        className={`w-11 h-5 rounded-full p-0.5 transition-all duration-300 relative ${
-                          rule.receives_same_day ? 'bg-rose-600' : 'bg-slate-800'
-                        }`}
-                      >
-                        <div
-                          className={`w-4 h-4 bg-white rounded-full shadow-md transition-all duration-300 ${
-                            rule.receives_same_day ? 'translate-x-6' : 'translate-x-0'
-                          }`}
-                        ></div>
+                      <button onClick={() => handleUpdateRule(rule.id, 'receives_same_day', !rule.receives_same_day)} className={`w-11 h-5 rounded-full p-0.5 transition-all duration-300 relative ${rule.receives_same_day ? 'bg-rose-600' : 'bg-slate-800'}`}>
+                        <div className={`w-4 h-4 bg-white rounded-full shadow-md transition-all duration-300 ${rule.receives_same_day ? 'translate-x-6' : 'translate-x-0'}`}></div>
                       </button>
-                      {rule.receives_same_day && (
-                        <span className="text-[7px] font-black text-rose-500 uppercase tracking-tighter">
-                          D+0
-                        </span>
-                      )}
+                      {rule.receives_same_day && <span className="text-[7px] font-black text-rose-500 uppercase tracking-tighter">D+0</span>}
                     </div>
                   </td>
 
-                  <td className="px-3 py-3 text-center">
-                    <select
-                      value={rule.default_status}
-                      onChange={(e) => handleUpdateRule(rule.id, 'default_status', e.target.value)}
-                      className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-[9px] font-black text-slate-300 outline-none focus:border-rose-500 transition-all uppercase tracking-wider w-[132px]"
-                    >
+                  <td className="px-3 py-4 text-center">
+                    <select value={rule.default_status} onChange={(e) => handleUpdateRule(rule.id, 'default_status', e.target.value)} className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-[9px] font-black text-slate-300 outline-none focus:border-rose-500 transition-all uppercase tracking-wider w-[132px]">
                       <option value="LIQUIDADO">LIQUIDADO</option>
                       <option value="PROVISIONADO">PROVISIONADO</option>
                     </select>
                   </td>
 
-                  <td className="px-3 py-3 text-center">
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={rule.fee_percent}
-                      onChange={(e) =>
-                        handleUpdateRule(rule.id, 'fee_percent', parseFloat(e.target.value) || 0)
-                      }
-                      className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
-                    />
+                  <td className="px-3 py-4 text-center">
+                    <input type="number" step="0.01" value={rule.fee_percent} onChange={(e) => handleUpdateRule(rule.id, 'fee_percent', parseFloat(e.target.value) || 0)} className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center" />
                   </td>
 
-                  <td className="px-3 py-3 text-center">
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={rule.fee_fixed}
-                      onChange={(e) =>
-                        handleUpdateRule(rule.id, 'fee_fixed', parseFloat(e.target.value) || 0)
-                      }
-                      className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
-                    />
+                  <td className="px-3 py-4 text-center">
+                    <input type="number" step="0.01" value={rule.fee_fixed} onChange={(e) => handleUpdateRule(rule.id, 'fee_fixed', parseFloat(e.target.value) || 0)} className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center" />
                   </td>
 
-                  <td className="px-4 py-3">
-                    <input
-                      type="text"
-                      value={rule.notes || ''}
-                      onChange={(e) => handleUpdateRule(rule.id, 'notes', e.target.value)}
-                      placeholder="Notas..."
-                      className="w-full min-w-[150px] bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-[11px] font-medium text-slate-400 outline-none focus:border-rose-500 transition-all"
-                    />
+                  <td className="px-4 py-4">
+                    <input type="text" value={rule.notes || ''} onChange={(e) => handleUpdateRule(rule.id, 'notes', e.target.value)} placeholder="Notas..." className="w-full min-w-[150px] bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[11px] font-medium text-slate-400 outline-none focus:border-rose-500 transition-all" />
                   </td>
 
-                  <td className="px-4 py-3 text-center">
-                    <button
-                      onClick={() => handleDeleteRule(rule)}
-                      disabled={saving}
-                      className="px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest bg-slate-950 hover:bg-slate-900 text-rose-400 transition-all whitespace-nowrap border border-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {rule.isNew ? 'Remover' : 'Excluir'}
-                    </button>
+                  <td className="px-4 py-4 text-center">
+                    {rule.isNew ? (
+                      <button onClick={() => handleRemoveUnsavedRule(rule.id)} className="px-2.5 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest bg-slate-950 hover:bg-slate-900 text-rose-400 transition-all whitespace-nowrap border border-slate-800">Remover</button>
+                    ) : (
+                      <button onClick={() => handleDeleteSavedRule(rule.id)} className="px-2.5 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest bg-slate-950 hover:bg-slate-900 text-rose-400 transition-all whitespace-nowrap border border-slate-800">Excluir</button>
+                    )}
                   </td>
                 </tr>
               ))
@@ -709,17 +592,11 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
 
       {genericCardRules.length > 0 && (
         <div className="rounded-2xl border border-slate-800 bg-slate-950/60 px-4 py-4">
-          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500 mb-3">
-            Atalhos para nova regra específica
-          </p>
+          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500 mb-3">Atalhos para nova regra específica</p>
           <div className="flex flex-wrap gap-2">
             {genericCardRules.map((rule) => (
-              <button
-                key={rule.id}
-                onClick={() => handleAddSpecificRule(rule)}
-                className="px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest bg-slate-800 hover:bg-slate-700 text-cyan-400 transition-all"
-              >
-                + {rule.payment_methods?.name}
+              <button key={rule.id} onClick={() => handleAddSpecificRule(rule)} className="px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest bg-slate-800 hover:bg-slate-700 text-cyan-400 transition-all">
+                + {getMethodName(rule)}
               </button>
             ))}
           </div>
@@ -732,9 +609,7 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
     return (
       <div className="flex flex-col items-center justify-center py-24 gap-4">
         <div className="w-14 h-14 border-4 border-rose-500/20 border-t-rose-500 rounded-full animate-spin"></div>
-        <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest animate-pulse">
-          Carregando premissas...
-        </p>
+        <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest animate-pulse">Carregando premissas...</p>
       </div>
     );
   }
@@ -743,23 +618,11 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
     <div className="space-y-6 animate-fade-in">
       <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
         <div>
-          <h2 className="text-3xl font-black text-white tracking-tight uppercase">
-            Premissas Financeiras
-          </h2>
-          <p className="text-slate-500 text-sm font-medium">
-            Configure regras gerais, regras específicas de cartões e saldos iniciais sem misturar contextos.
-          </p>
+          <h2 className="text-3xl font-black text-white tracking-tight uppercase">Premissas Financeiras</h2>
+          <p className="text-slate-500 text-sm font-medium">Configure regras gerais, regras específicas de cartões e saldos iniciais sem misturar contextos.</p>
         </div>
 
-        <button
-          onClick={handleSave}
-          disabled={saving || rules.length === 0}
-          className={`flex items-center gap-2 px-7 py-3 rounded-2xl text-xs font-black uppercase tracking-widest transition-all shadow-xl ${
-            saving || rules.length === 0
-              ? 'bg-slate-800 text-slate-600 cursor-not-allowed'
-              : 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-600/20'
-          }`}
-        >
+        <button onClick={handleSave} disabled={saving || rules.length === 0} className={`flex items-center gap-2 px-7 py-3 rounded-2xl text-xs font-black uppercase tracking-widest transition-all shadow-xl ${saving || rules.length === 0 ? 'bg-slate-800 text-slate-600 cursor-not-allowed' : 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-600/20'}`}>
           {saving ? (
             <>
               <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
@@ -767,81 +630,30 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
             </>
           ) : (
             <>
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="3"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-                <polyline points="17 21 17 13 7 13 7 21" />
-                <polyline points="7 3 7 8 15 8" />
-              </svg>
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><polyline points="17 21 17 13 7 13 7 21" /><polyline points="7 3 7 8 15 8" /></svg>
               Salvar Alterações
             </>
           )}
         </button>
       </header>
 
-      {error && (
-        <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-2xl text-rose-500 text-xs font-bold flex items-center gap-3 animate-shake">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="15"
-            height="15"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="3"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <circle cx="12" cy="12" r="10" />
-            <line x1="12" y1="8" x2="12" y2="12" />
-            <line x1="12" y1="16" x2="12.01" y2="16" />
-          </svg>
-          {error}
-        </div>
-      )}
+      {error && <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-2xl text-rose-500 text-xs font-bold flex items-center gap-3 animate-shake">{error}</div>}
+      {success && <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl text-emerald-500 text-xs font-bold flex items-center gap-3 animate-fade-in">Configurações salvas com sucesso!</div>}
 
-      {success && (
-        <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl text-emerald-500 text-xs font-bold flex items-center gap-3 animate-fade-in">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="15"
-            height="15"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="3"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <polyline points="20 6 9 17 4 12" />
-          </svg>
-          Configurações salvas com sucesso!
+      {legacyRules.length > 0 && (
+        <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-4">
+          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-amber-400 mb-2">Atenção à base antiga</p>
+          <p className="text-sm text-amber-100 leading-relaxed">
+            O app agora trabalha com <strong>meios base em Cadastros</strong> e <strong>bandeira/operadora em Regras de Cartões</strong>. Existem {legacyRules.length} regra(s) ligada(s) a meios legados fora desse padrão.
+          </p>
         </div>
       )}
 
       <div className="flex flex-wrap gap-2">
         {(Object.keys(TAB_LABELS) as TabKey[]).map((tab) => {
           const isActive = activeTab === tab;
-
           return (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-[0.18em] transition-all ${
-                isActive
-                  ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/20'
-                  : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
-              }`}
-            >
+            <button key={tab} onClick={() => setActiveTab(tab)} className={`px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-[0.18em] transition-all ${isActive ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/20' : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'}`}>
               {TAB_LABELS[tab]}
             </button>
           );
@@ -850,12 +662,7 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
 
       {activeTab === 'general' && renderGeneralTable()}
       {activeTab === 'cards' && renderCardsTable()}
-      {activeTab === 'balances' && activeCompany && (
-        <BankOpeningBalances
-          companyId={activeCompany.id}
-          banks={banks}
-        />
-      )}
+      {activeTab === 'balances' && activeCompany && <BankOpeningBalances companyId={activeCompany.id} banks={banks} />}
     </div>
   );
 };

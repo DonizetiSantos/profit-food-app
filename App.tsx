@@ -20,6 +20,24 @@ import { Company } from './types';
 
 const WHATSAPP_LINK = "https://wa.me/5511999999999"; // Configurar link aqui
 
+const CORE_PAYMENT_METHODS = [
+  'DINHEIRO',
+  'PIX',
+  'BOLETO',
+  'CARTÃO CRÉDITO',
+  'CARTÃO DÉBITO',
+  'VOUCHER',
+  'APLICATIVO',
+  'OUTROS',
+];
+
+const normalizeMethodName = (value: string) =>
+  value
+    .trim()
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
 const canAccessCompany = (company: Company | null): boolean => {
   if (!company) return false;
   
@@ -121,13 +139,33 @@ const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void
 
   const handleAddMethod = async (name: string) => { 
     if (!activeCompany) return;
+
+    const normalizedRequested = normalizeMethodName(name);
+    const canonicalMethod = CORE_PAYMENT_METHODS.find(
+      (method) => normalizeMethodName(method) === normalizedRequested
+    );
+
+    if (!canonicalMethod) {
+      alert('Cadastre aqui apenas os meios base: Dinheiro, Pix, Boleto, Cartão Crédito, Cartão Débito, Voucher, Aplicativo ou Outros.');
+      return;
+    }
+
+    const alreadyExists = paymentMethods.some(
+      (method) => normalizeMethodName(method.name) === normalizedRequested
+    );
+
+    if (alreadyExists) {
+      alert('Esse canal base já está cadastrado.');
+      return;
+    }
+
     setSyncing(true);
     try {
-      const newMethod = { id: crypto.randomUUID(), name };
+      const newMethod = { id: crypto.randomUUID(), name: canonicalMethod };
       await datastore.upsertOne('payment_methods', newMethod, activeCompany.id);
-      setPaymentMethods(prev => [...prev, newMethod]); 
+      setPaymentMethods(prev => [...prev, newMethod].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))); 
     } catch (err) {
-      alert("Erro ao salvar no servidor.");
+      alert('Erro ao salvar no servidor.');
     } finally {
       setSyncing(false);
     }
@@ -135,12 +173,23 @@ const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void
 
   const handleDeleteMethod = async (id: string) => { 
     if (!activeCompany) return;
+
+    const targetMethod = paymentMethods.find((method) => method.id === id);
+    const isCoreMethod = !!targetMethod && CORE_PAYMENT_METHODS.some(
+      (method) => normalizeMethodName(method) === normalizeMethodName(targetMethod.name)
+    );
+
+    if (isCoreMethod) {
+      alert('Os meios base do sistema não devem ser excluídos. Mantenha o cadastro estrutural e trate bandeira/operadora na aba Regras de Cartões.');
+      return;
+    }
+
     setSyncing(true);
     try {
       await datastore.deleteOne('payment_methods', id, activeCompany.id);
       setPaymentMethods(prev => prev.filter(m => m.id !== id)); 
     } catch (err) {
-      alert("Erro ao excluir no servidor.");
+      alert('Erro ao excluir no servidor.');
     } finally {
       setSyncing(false);
     }

@@ -27,43 +27,34 @@ const buildRuleMaps = (rules: PaymentSettlementRule[]) => {
   for (const rule of rules) {
     if (rule.payment_method_id) {
       const existing = byPaymentMethodId.get(rule.payment_method_id) || [];
-      existing.push(rule);
-      byPaymentMethodId.set(rule.payment_method_id, existing);
+      byPaymentMethodId.set(rule.payment_method_id, [...existing, rule]);
     }
 
-    const methodName = normalizeText(rule.payment_methods?.name || '');
+    const methodName = normalizeText(rule.payment_methods?.name);
     if (methodName) {
       const existing = byMethodName.get(methodName) || [];
-      existing.push(rule);
-      byMethodName.set(methodName, existing);
+      byMethodName.set(methodName, [...existing, rule]);
     }
   }
 
   return { byPaymentMethodId, byMethodName };
 };
 
-const resolveRuleForRow = (
-  row: NormalizedPdvClosing,
-  settlementRules: PaymentSettlementRule[]
+const resolveBestRule = (
+  candidateRules: PaymentSettlementRule[],
+  cardBrand?: string | null,
+  acquirerName?: string | null
 ): PaymentSettlementRule | null => {
-  const { byPaymentMethodId, byMethodName } = buildRuleMaps(settlementRules);
-  const candidateRules = row.paymentMethodId
-    ? byPaymentMethodId.get(row.paymentMethodId) || []
-    : byMethodName.get(normalizeText(row.rawLabel || '')) || [];
+  if (candidateRules.length === 0) return null;
 
-  if (candidateRules.length === 0) {
-    return null;
-  }
-
-  const normalizedBrand = normalizeText(row.cardBrand);
-  const normalizedAcquirer = normalizeText(row.acquirerName);
+  const normalizedBrand = normalizeText(cardBrand);
+  const normalizedAcquirer = normalizeText(acquirerName);
 
   const exactRule = candidateRules.find((rule) => {
     const ruleBrand = normalizeText(rule.card_brand);
     const ruleAcquirer = normalizeText(rule.acquirer_name);
     return !!ruleBrand && !!ruleAcquirer && ruleBrand === normalizedBrand && ruleAcquirer === normalizedAcquirer;
   });
-
   if (exactRule) return exactRule;
 
   const brandRule = candidateRules.find((rule) => {
@@ -71,7 +62,6 @@ const resolveRuleForRow = (
     const ruleAcquirer = normalizeText(rule.acquirer_name);
     return !!ruleBrand && !ruleAcquirer && ruleBrand === normalizedBrand;
   });
-
   if (brandRule) return brandRule;
 
   const acquirerRule = candidateRules.find((rule) => {
@@ -79,16 +69,12 @@ const resolveRuleForRow = (
     const ruleAcquirer = normalizeText(rule.acquirer_name);
     return !ruleBrand && !!ruleAcquirer && ruleAcquirer === normalizedAcquirer;
   });
-
   if (acquirerRule) return acquirerRule;
 
-  const genericRule = candidateRules.find((rule) => {
-    const ruleBrand = normalizeText(rule.card_brand);
-    const ruleAcquirer = normalizeText(rule.acquirer_name);
-    return !ruleBrand && !ruleAcquirer;
-  });
+  const genericRule = candidateRules.find((rule) => !normalizeText(rule.card_brand) && !normalizeText(rule.acquirer_name));
+  if (genericRule) return genericRule;
 
-  return genericRule || candidateRules[0] || null;
+  return candidateRules[0] || null;
 };
 
 const applyRuleToRow = (
@@ -165,8 +151,28 @@ const recalculateRowsFromFinalMapping = (
   rows: NormalizedPdvClosing[],
   settlementRules: PaymentSettlementRule[]
 ): NormalizedPdvClosing[] => {
+  const { byPaymentMethodId, byMethodName } = buildRuleMaps(settlementRules);
+
   return rows.map((row) => {
-    const matchedRule = resolveRuleForRow(row, settlementRules);
+    let matchedRule: PaymentSettlementRule | null = null;
+
+    if (row.paymentMethodId && byPaymentMethodId.has(row.paymentMethodId)) {
+      matchedRule = resolveBestRule(
+        byPaymentMethodId.get(row.paymentMethodId) || [],
+        row.cardBrand,
+        row.acquirerName
+      );
+    } else {
+      const rawLabel = normalizeText(row.rawLabel);
+      if (rawLabel && byMethodName.has(rawLabel)) {
+        matchedRule = resolveBestRule(
+          byMethodName.get(rawLabel) || [],
+          row.cardBrand,
+          row.acquirerName
+        );
+      }
+    }
+
     return applyRuleToRow(row, matchedRule);
   });
 };
