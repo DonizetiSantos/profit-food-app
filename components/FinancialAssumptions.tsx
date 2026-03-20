@@ -8,9 +8,20 @@ interface Props {
   banks: Bank[];
 }
 
+type PaymentMethodRow = {
+  id: string;
+  name: string;
+};
+
+type RuleRow = PaymentSettlementRule & {
+  payment_methods?: {
+    name: string;
+  } | null;
+};
+
 export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
   const { activeCompany } = useActiveCompany();
-  const [rules, setRules] = useState<PaymentSettlementRule[]>([]);
+  const [rules, setRules] = useState<RuleRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -18,9 +29,15 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
 
   useEffect(() => {
     const loadData = async () => {
-      if (!activeCompany) return;
+      if (!activeCompany) {
+        setRules([]);
+        setLoading(false);
+        return;
+      }
+
       setLoading(true);
       setError(null);
+
       try {
         const { data: rulesData, error: rulesError } = await supabase
           .from('payment_settlement_rules')
@@ -37,24 +54,29 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
 
         if (methodsError) throw methodsError;
 
-        const existingRules = (rulesData as any[]) || [];
-        const methodIdsWithRules = new Set(existingRules.map(r => r.payment_method_id));
+        const existingRules: RuleRow[] = ((rulesData as RuleRow[]) || []).map((rule) => ({
+          ...rule,
+          payment_methods: rule.payment_methods || { name: 'Desconhecido' }
+        }));
 
-        const missingRules = ((methodsData as any[]) || [])
-          .filter(m => !methodIdsWithRules.has(m.id))
-          .map(m => ({
+        const paymentMethods: PaymentMethodRow[] = (methodsData as PaymentMethodRow[]) || [];
+        const methodIdsWithRules = new Set(existingRules.map((r) => r.payment_method_id));
+
+        const missingRules: RuleRow[] = paymentMethods
+          .filter((method) => !methodIdsWithRules.has(method.id))
+          .map((method) => ({
             id: crypto.randomUUID(),
             company_id: activeCompany.id,
-            payment_method_id: m.id,
+            payment_method_id: method.id,
             settlement_days: 0,
             receives_same_day: false,
-            default_status: 'PROVISIONADO' as const,
+            default_status: 'PROVISIONADO',
             fee_percent: 0,
             fee_fixed: 0,
             notes: '',
             is_active: true,
-            payment_methods: { name: m.name }
-          }));
+            payment_methods: { name: method.name }
+          } as RuleRow));
 
         const allRules = [...existingRules, ...missingRules].sort((a, b) =>
           (a.payment_methods?.name || '').localeCompare(b.payment_methods?.name || '')
@@ -63,7 +85,7 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
         setRules(allRules);
       } catch (err: any) {
         console.error('Erro ao carregar premissas:', err);
-        setError('Não foi possível carregar as premissas financeiras.');
+        setError(err?.message || 'Não foi possível carregar as premissas financeiras.');
       } finally {
         setLoading(false);
       }
@@ -73,37 +95,101 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
   }, [activeCompany]);
 
   const handleUpdateRule = (id: string, field: keyof PaymentSettlementRule, value: any) => {
-    setRules(prev =>
-      prev.map(rule =>
+    setRules((prev) =>
+      prev.map((rule) =>
         rule.id === id ? { ...rule, [field]: value } : rule
       )
     );
     setSuccess(false);
+    setError(null);
   };
 
   const handleSave = async () => {
     if (!activeCompany) return;
+
     setSaving(true);
     setError(null);
     setSuccess(false);
 
     try {
-      const rulesToSave = rules.map(({ payment_methods, ...rest }) => ({
-        ...rest,
-        company_id: activeCompany.id
-      }));
+      const now = new Date().toISOString();
 
-      const { error: saveError } = await supabase
+      const { data: existingRows, error: existingRowsError } = await supabase
         .from('payment_settlement_rules')
-        .upsert(rulesToSave);
+        .select('id, payment_method_id')
+        .eq('company_id', activeCompany.id);
 
-      if (saveError) throw saveError;
+      if (existingRowsError) {
+        throw existingRowsError;
+      }
+
+      const existingByPaymentMethod = new Map<string, { id: string; payment_method_id: string }>();
+      ((existingRows as { id: string; payment_method_id: string }[]) || []).forEach((row) => {
+        existingByPaymentMethod.set(row.payment_method_id, row);
+      });
+
+      const rulesToInsert = rules
+        .filter((rule) => !existingByPaymentMethod.has(rule.payment_method_id))
+        .map(({ payment_methods, ...rule }) => ({
+          company_id: activeCompany.id,
+          payment_method_id: rule.payment_method_id,
+          settlement_days: Number(rule.settlement_days) || 0,
+          receives_same_day: !!rule.receives_same_day,
+          default_status: rule.default_status,
+          fee_percent: Number(rule.fee_percent) || 0,
+          fee_fixed: Number(rule.fee_fixed) || 0,
+          notes: rule.notes || '',
+          is_active: rule.is_active ?? true,
+          created_at: now
+        }));
+
+      const rulesToUpdate = rules
+        .filter((rule) => existingByPaymentMethod.has(rule.payment_method_id))
+        .map(({ payment_methods, ...rule }) => ({
+          id: existingByPaymentMethod.get(rule.payment_method_id)!.id,
+          company_id: activeCompany.id,
+          payment_method_id: rule.payment_method_id,
+          settlement_days: Number(rule.settlement_days) || 0,
+          receives_same_day: !!rule.receives_same_day,
+          default_status: rule.default_status,
+          fee_percent: Number(rule.fee_percent) || 0,
+          fee_fixed: Number(rule.fee_fixed) || 0,
+          notes: rule.notes || '',
+          is_active: rule.is_active ?? true
+        }));
+
+      if (rulesToInsert.length > 0) {
+        const { error: insertError } = await supabase
+          .from('payment_settlement_rules')
+          .insert(rulesToInsert);
+
+        if (insertError) {
+          throw insertError;
+        }
+      }
+
+      if (rulesToUpdate.length > 0) {
+        const { error: updateError } = await supabase
+          .from('payment_settlement_rules')
+          .upsert(rulesToUpdate, { onConflict: 'id' });
+
+        if (updateError) {
+          throw updateError;
+        }
+      }
 
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err: any) {
       console.error('Erro ao salvar premissas:', err);
-      setError('Erro ao salvar as alterações. Verifique sua conexão.');
+
+      const databaseMessage =
+        err?.message ||
+        err?.details ||
+        err?.hint ||
+        'Erro desconhecido ao salvar premissas financeiras.';
+
+      setError(`Erro ao salvar as alterações: ${databaseMessage}`);
     } finally {
       setSaving(false);
     }
@@ -267,7 +353,7 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
                         type="number"
                         value={rule.settlement_days}
                         onChange={(e) =>
-                          handleUpdateRule(rule.id, 'settlement_days', parseInt(e.target.value) || 0)
+                          handleUpdateRule(rule.id, 'settlement_days', parseInt(e.target.value, 10) || 0)
                         }
                         className="w-20 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
                       />

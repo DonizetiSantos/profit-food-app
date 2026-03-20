@@ -1,9 +1,8 @@
-import React, { useMemo, useEffect, useState } from 'react';
+
+import React, { useMemo } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { FinancialPosting, MainGroup, Account, Bank } from '../types';
 import { calculateDRE } from '../src/lib/financialCalculations';
-import { supabase } from '../src/lib/supabase';
-import { useActiveCompany } from '../src/contexts/CompanyContext';
 
 interface Props {
   postings: FinancialPosting[];
@@ -12,60 +11,10 @@ interface Props {
   onLiquidar?: (posting: FinancialPosting) => void;
 }
 
-interface OpeningBalanceRow {
-  bank_id: string;
-  opening_balance: number;
-  reference_date: string;
-}
-
 export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquidar }) => {
-  const { activeCompany } = useActiveCompany();
-
-  const [openingBalances, setOpeningBalances] = useState<Record<string, number>>({});
-  const [openingReferenceDate, setOpeningReferenceDate] = useState<string | null>(null);
-
   const today = new Date().toISOString().split('T')[0];
   const currentMonth = new Date().getMonth();
   const currentYear = new Date().getFullYear();
-
-  useEffect(() => {
-    const loadOpeningBalances = async () => {
-      if (!activeCompany) {
-        setOpeningBalances({});
-        setOpeningReferenceDate(null);
-        return;
-      }
-
-      try {
-        const { data, error } = await supabase
-          .from('bank_opening_balances')
-          .select('bank_id, opening_balance, reference_date')
-          .eq('company_id', activeCompany.id);
-
-        if (error) throw error;
-
-        const balanceMap: Record<string, number> = {};
-        let earliestDate: string | null = null;
-
-        (data as OpeningBalanceRow[] | null)?.forEach((row) => {
-          balanceMap[row.bank_id] = Number(row.opening_balance) || 0;
-
-          if (!earliestDate || row.reference_date < earliestDate) {
-            earliestDate = row.reference_date;
-          }
-        });
-
-        setOpeningBalances(balanceMap);
-        setOpeningReferenceDate(earliestDate);
-      } catch (err) {
-        console.error('Erro ao carregar saldos iniciais dos bancos no dashboard:', err);
-        setOpeningBalances({});
-        setOpeningReferenceDate(null);
-      }
-    };
-
-    loadOpeningBalances();
-  }, [activeCompany]);
 
   const dreData = useMemo(() => {
     return calculateDRE(postings, accounts, currentMonth, currentYear);
@@ -76,24 +25,23 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
     let realExpense = 0;
     let provExpense = 0;
 
-    const bankBalances: Record<string, number> = {};
-    banks.forEach((b) => {
-      bankBalances[b.id] = Number(openingBalances[b.id] || 0);
-    });
-
-    postings.forEach((p) => {
+    postings.forEach(p => {
       if (p.status === 'LIQUIDADO') {
         if (p.group === MainGroup.RECEITAS) realIncome += p.amount;
         if (p.group === MainGroup.DESPESAS) realExpense += p.amount;
       } else {
         if (p.group === MainGroup.DESPESAS) provExpense += p.amount;
       }
+    });
 
+    const currentBalance = realIncome - realExpense;
+    const projectedBalance = currentBalance - provExpense;
+
+    const bankBalances: Record<string, number> = {};
+    banks.forEach(b => bankBalances[b.id] = 0);
+    
+    postings.forEach(p => {
       if (p.status === 'LIQUIDADO' && p.bankId) {
-        if (!(p.bankId in bankBalances)) {
-          bankBalances[p.bankId] = 0;
-        }
-
         if (p.group === MainGroup.RECEITAS) {
           bankBalances[p.bankId] += p.amount;
         } else if (p.group === MainGroup.DESPESAS) {
@@ -101,10 +49,6 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
         }
       }
     });
-
-    const openingTotal = Object.values(openingBalances).reduce((sum, value) => sum + Number(value || 0), 0);
-    const currentBalance = openingTotal + realIncome - realExpense;
-    const projectedBalance = currentBalance - provExpense;
 
     return {
       currentBalance,
@@ -114,17 +58,16 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
       totalRealExpense: realExpense,
       bankBalances
     };
-  }, [postings, banks, openingBalances]);
+  }, [postings, banks]);
 
   const chartData = useMemo(() => {
-    const dates: Record<string, { real: number; prov: number }> = {};
-
-    postings.forEach((p) => {
+    const dates: Record<string, { real: number, prov: number }> = {};
+    postings.forEach(p => {
       const date = p.status === 'LIQUIDADO' ? p.liquidationDate || p.occurrenceDate : p.dueDate;
       if (!date) return;
-
+      
       if (!dates[date]) dates[date] = { real: 0, prov: 0 };
-
+      
       if (p.status === 'LIQUIDADO') {
         if (p.group === MainGroup.RECEITAS) {
           dates[date].real += p.amount;
@@ -138,52 +81,31 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
       }
     });
 
-    const openingTotal = Object.values(openingBalances).reduce((sum, value) => sum + Number(value || 0), 0);
-
-    const sortedEntries = Object.entries(dates)
+    return Object.entries(dates)
       .map(([date, vals]) => ({
         date,
         formattedDate: date.split('-').reverse().slice(0, 2).join('/'),
         saldo: vals.real + vals.prov
       }))
-      .sort((a, b) => a.date.localeCompare(b.date));
-
-    const shouldCreateReferencePoint =
-      openingReferenceDate &&
-      !sortedEntries.some((item) => item.date === openingReferenceDate);
-
-    const baseData = shouldCreateReferencePoint
-      ? [
-          {
-            date: openingReferenceDate!,
-            formattedDate: openingReferenceDate!.split('-').reverse().slice(0, 2).join('/'),
-            saldo: 0
-          },
-          ...sortedEntries
-        ]
-      : sortedEntries;
-
-    return baseData.reduce((acc: any[], curr, i) => {
-      const prevSaldo = i > 0 ? acc[i - 1].acumulado : openingTotal;
-      acc.push({
-        ...curr,
-        acumulado: prevSaldo + curr.saldo
-      });
-      return acc;
-    }, []);
-  }, [postings, openingBalances, openingReferenceDate]);
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .reduce((acc: any[], curr, i) => {
+        const prevSaldo = i > 0 ? acc[i-1].acumulado : 0;
+        acc.push({ ...curr, acumulado: prevSaldo + curr.saldo });
+        return acc;
+      }, []);
+  }, [postings]);
 
   const { overdue, upcoming, overdueTotal, upcomingTotal } = useMemo(() => {
     const expenses = postings
-      .filter((p) => {
-        const account = accounts.find((a) => a.id === p.accountId);
+      .filter(p => {
+        const account = accounts.find(a => a.id === p.accountId);
         const isTaxaCartao = account?.name.toUpperCase() === 'TAXAS CARTÕES';
         return p.status === 'PROVISIONADO' && p.group === MainGroup.DESPESAS && p.dueDate && !isTaxaCartao;
       })
       .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
 
-    const overdueList = expenses.filter((p) => p.dueDate < today);
-    const upcomingList = expenses.filter((p) => p.dueDate >= today);
+    const overdueList = expenses.filter(p => p.dueDate < today);
+    const upcomingList = expenses.filter(p => p.dueDate >= today);
 
     return {
       overdue: overdueList,
@@ -191,14 +113,19 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
       overdueTotal: overdueList.reduce((sum, p) => sum + p.amount, 0),
       upcomingTotal: upcomingList.reduce((sum, p) => sum + p.amount, 0)
     };
-  }, [postings, accounts, today]);
+  }, [postings, today]);
 
-  const formatCurrency = (val: number) =>
+  const formatCurrency = (val: number) => 
     val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+  const formatPercent = (val: number, base: number) => {
+    if (base === 0) return '0,0%';
+    return `${((val / base) * 100).toFixed(1)}%`;
+  };
 
   const getIndicatorStatus = (type: string, value: number) => {
     const percent = dreData.faturamentoBruto > 0 ? (value / dreData.faturamentoBruto) * 100 : 0;
-
+    
     switch (type) {
       case 'CMV':
         if (percent <= 35) return { label: 'Saudável', color: 'text-emerald-400', bg: 'bg-emerald-500/10' };
@@ -237,7 +164,7 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
     const faturamento = dreData.faturamentoBruto;
     const despesasFixas = dreData.totalDespesasFixas;
     const margemContrib = dreData.lucroBruto;
-
+    
     const mcPercent = faturamento > 0 ? margemContrib / faturamento : 0;
     const pontoEquilibrio = mcPercent > 0 ? despesasFixas / mcPercent : 0;
     const margemSeguranca = faturamento > 0 ? ((faturamento - pontoEquilibrio) / faturamento) * 100 : 0;
@@ -263,7 +190,7 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
   }, [dreData]);
 
   const radarInfo = useMemo(() => {
-    const alerts: { title: string; description: string; priority: 'high' | 'medium' | 'low' }[] = [];
+    const alerts: { title: string, description: string, priority: 'high' | 'medium' | 'low' }[] = [];
     let score = 100;
 
     const faturamento = dreData.faturamentoBruto;
@@ -271,7 +198,11 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
     const margemPercent = faturamento > 0 ? (dreData.lucroBruto / faturamento) * 100 : 0;
     const fixasPercent = faturamento > 0 ? (dreData.totalDespesasFixas / faturamento) * 100 : 0;
     const lucroPercent = faturamento > 0 ? (dreData.lucroOperacional / faturamento) * 100 : 0;
+    const pessoalPercent = faturamento > 0 ? (dreData.pessoal / faturamento) * 100 : 0;
+    const financeirasPercent = faturamento > 0 ? (dreData.despesasFinanceiras / faturamento) * 100 : 0;
+    const dividaPercent = faturamento > 0 ? (dreData.servicoDivida / faturamento) * 100 : 0;
 
+    // Margem de Contribuição (Peso Alto: 25)
     if (margemPercent < 37) {
       alerts.push({ title: 'Margem Comprimida', description: 'Margem abaixo de 37% sugere investigar precificação ou taxas de cartões.', priority: 'high' });
       score -= 25;
@@ -279,6 +210,7 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
       score -= 10;
     }
 
+    // Despesas Fixas (Peso Alto: 20)
     if (fixasPercent > 38) {
       alerts.push({ title: 'Fixas Elevadas', description: 'Estrutura fixa acima de 38% pode estar pesada para o faturamento atual.', priority: 'high' });
       score -= 20;
@@ -286,6 +218,7 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
       score -= 8;
     }
 
+    // Lucratividade (Peso Alto: 20)
     if (lucroPercent < 7) {
       alerts.push({ title: 'Lucratividade Baixa', description: 'Resultado operacional abaixo de 7% exige revisão imediata de custos.', priority: 'high' });
       score -= 20;
@@ -293,16 +226,19 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
       score -= 8;
     }
 
+    // Fluxo Final Previsto (Peso Médio-Alto: 15)
     if (stats.projectedBalance < 0) {
       alerts.push({ title: 'Risco de Caixa', description: 'Fluxo final previsto negativo sugere necessidade de antecipação ou cortes.', priority: 'high' });
       score -= 15;
     }
 
+    // Contas Vencidas (Peso Médio: 10)
     if (overdue.length > 0) {
       alerts.push({ title: 'Contas Vencidas', description: 'Há compromissos em atraso; vale acompanhar o impacto no custo financeiro.', priority: 'medium' });
       score -= 10;
     }
 
+    // CMV (Peso Médio: 10)
     if (cmvPercent > 38) {
       alerts.push({ title: 'CMV Crítico', description: 'Custo de mercadoria acima de 38% sugere falhas em compras ou estoque.', priority: 'medium' });
       score -= 10;
@@ -313,6 +249,7 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
       alerts.push({ title: 'CMV Controlado', description: 'Custo de mercadoria dentro da média de referência.', priority: 'low' });
     }
 
+    // Margem de Segurança (Peso Médio-Alto: 10)
     if (operationalSecurity.margemSeguranca < 10) {
       alerts.push({ title: 'Segurança em Risco', description: 'Margem de segurança baixa; operação vulnerável a quedas de venda.', priority: 'high' });
       score -= 10;
@@ -324,7 +261,6 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
     let status = 'Saudável';
     let statusColor = 'text-emerald-400';
     let gaugeColor = '#10b981';
-
     if (score < 50) {
       status = 'Crítico';
       statusColor = 'text-rose-500';
@@ -335,22 +271,16 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
       gaugeColor = '#f59e0b';
     }
 
-    return {
-      score,
-      status,
-      statusColor,
-      gaugeColor,
-      alerts: alerts.sort((a, b) => (a.priority === 'high' ? -1 : 1)).slice(0, 4)
-    };
+    return { score, status, statusColor, gaugeColor, alerts: alerts.sort((a, b) => (a.priority === 'high' ? -1 : 1)).slice(0, 4) };
   }, [dreData, overdue, stats.projectedBalance, operationalSecurity]);
 
   const interpretationText = useMemo(() => {
-    if (dreData.faturamentoBruto === 0) return 'Aguardando dados de faturamento para análise executiva.';
-
+    if (dreData.faturamentoBruto === 0) return "Aguardando dados de faturamento para análise executiva.";
+    
     const lucroPercent = (dreData.lucroOperacional / dreData.faturamentoBruto) * 100;
-    if (lucroPercent > 10) return 'Os indicadores atuais sugerem uma operação saudável neste momento, com boa folga operacional. Vale acompanhar a evolução do mês para confirmar a consistência dessa tendência.';
-    if (lucroPercent >= 7) return 'O painel sugere uma operação em equilíbrio, mas com pontos específicos que ainda merecem monitoramento, especialmente custos variáveis.';
-    return 'O resultado operacional atual sugere atenção imediata. Vale investigar se a compressão vem de custos fixos elevados ou margens reduzidas.';
+    if (lucroPercent > 10) return "Os indicadores atuais sugerem uma operação saudável neste momento, com boa folga operacional. Vale acompanhar a evolução do mês para confirmar a consistência dessa tendência.";
+    if (lucroPercent >= 7) return "O painel sugere uma operação em equilíbrio, mas com pontos específicos que ainda merecem monitoramento, especialmente custos variáveis.";
+    return "O resultado operacional atual sugere atenção imediata. Vale investigar se a compressão vem de custos fixos elevados ou margens reduzidas.";
   }, [dreData]);
 
   const priorityFinancial = useMemo(() => {
@@ -408,12 +338,14 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
       }
     ];
 
-    const deviations = indicators.map((ind) => {
-      const deviation = ind.type === 'lower' ? ind.current - ind.ideal : ind.ideal - ind.current;
+    const deviations = indicators.map(ind => {
+      const deviation = ind.type === 'lower' 
+        ? ind.current - ind.ideal 
+        : ind.ideal - ind.current;
       return { ...ind, deviation };
     });
 
-    const worst = deviations.reduce((prev, current) => (prev.deviation > current.deviation ? prev : current));
+    const worst = deviations.reduce((prev, current) => (prev.deviation > current.deviation) ? prev : current);
 
     if (worst.deviation <= 0) return { healthy: true };
 
@@ -435,10 +367,10 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
     if (onLiquidar) onLiquidar(p);
   };
 
-  const IndicatorCard = ({ title, value, type, isCurrency = false }: { title: string; value: number; type: string; isCurrency?: boolean }) => {
+  const IndicatorCard = ({ title, value, type, isCurrency = false }: { title: string, value: number, type: string, isCurrency?: boolean }) => {
     const status = getIndicatorStatus(type, value);
     const percent = dreData.faturamentoBruto > 0 ? (value / dreData.faturamentoBruto) * 100 : 0;
-
+    
     return (
       <div className="bg-slate-900 p-5 rounded-3xl border border-slate-800 shadow-xl flex flex-col gap-2">
         <div className="flex justify-between items-start">
@@ -462,11 +394,11 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
   };
 
   const ItemCard: React.FC<{ p: FinancialPosting; isOverdue?: boolean }> = ({ p, isOverdue }) => (
-    <div className="flex items-center gap-4 p-4 rounded-2xl bg-slate-800/40 hover:bg-slate-800 transition-all border border-transparent hover:border-slate-700 group">
+    <div className={`flex items-center gap-4 p-4 rounded-2xl bg-slate-800/40 hover:bg-slate-800 transition-all border border-transparent hover:border-slate-700 group`}>
       <div className={`w-1 h-8 rounded-full ${isOverdue ? 'bg-rose-500 animate-pulse' : 'bg-amber-500'}`}></div>
       <div className="flex-1 min-w-0">
         <p className="text-[11px] font-black text-slate-200 truncate group-hover:text-white transition-colors">
-          {accounts.find((a) => a.id === p.accountId)?.name || 'CONTA'}
+          {accounts.find(a => a.id === p.accountId)?.name || 'CONTA'}
         </p>
         <p className={`text-[9px] font-bold uppercase tracking-wider ${isOverdue ? 'text-rose-500' : 'text-slate-500'}`}>
           {p.dueDate.split('-').reverse().join('/')} {isOverdue && '• VENCIDA'}
@@ -476,14 +408,11 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
         <p className={`text-[11px] font-black ${isOverdue ? 'text-rose-400' : 'text-amber-400'}`}>
           {formatCurrency(p.amount)}
         </p>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            handleLiquidarAction(p);
-          }}
+        <button 
+          onClick={(e) => { e.stopPropagation(); handleLiquidarAction(p); }}
           className="px-2 py-1 bg-slate-700 hover:bg-rose-500 text-white text-[8px] font-black uppercase rounded-lg transition-all opacity-0 group-hover:opacity-100 flex items-center gap-1"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
           Liquidar
         </button>
       </div>
@@ -497,6 +426,7 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
         <p className="text-slate-500 text-sm font-medium uppercase tracking-widest">Visão Geral da Operação</p>
       </header>
 
+      {/* 1. Indicadores Executivos do Topo */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-4">
         <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 shadow-xl flex flex-col gap-1">
           <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Faturamento</p>
@@ -513,7 +443,9 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
         <IndicatorCard title="Lucratividade" value={dreData.lucroOperacional} type="LUCRATIVIDADE" />
       </div>
 
+      {/* PRIORIDADE FINANCEIRA E PARECER CONSULTIVO */}
       <div className="flex flex-col xl:flex-row gap-6">
+        {/* PRIORIDADE FINANCEIRA DO NEGÓCIO */}
         {priorityFinancial && (
           <div className={`flex-1 p-6 rounded-3xl border shadow-xl flex flex-col md:flex-row items-center gap-6 transition-all duration-500 ${priorityFinancial.healthy ? 'bg-emerald-900/10 border-emerald-500/20' : 'bg-rose-900/10 border-rose-500/20'}`}>
             <div className={`p-4 rounded-2xl shrink-0 ${priorityFinancial.healthy ? 'bg-emerald-500/20' : 'bg-rose-500/20'}`}>
@@ -529,7 +461,7 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
                 )}
               </svg>
             </div>
-
+            
             <div className="flex-1">
               <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-1">Prioridade Financeira</h3>
               {priorityFinancial.healthy ? (
@@ -546,7 +478,7 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
                       Foco imediato na correção deste indicador para proteger o resultado.
                     </p>
                   </div>
-
+                  
                   <div className="flex gap-8">
                     <div>
                       <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Atual</p>
@@ -575,10 +507,11 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
           </div>
         )}
 
+        {/* 2. Interpretação Executiva Curta */}
         <div className={`${priorityFinancial ? 'xl:w-1/3' : 'w-full'} bg-indigo-600/5 border border-indigo-500/20 p-6 rounded-3xl flex flex-col justify-center gap-4`}>
           <div className="flex items-center gap-3">
             <div className="bg-indigo-600/20 p-2 rounded-xl">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-indigo-400"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" /><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" /></svg>
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-indigo-400"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
             </div>
             <h3 className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em]">Parecer Consultivo</h3>
           </div>
@@ -588,46 +521,53 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
         </div>
       </div>
 
+      {/* 3. Radar Financeiro Executivo */}
       <div className="bg-slate-900 rounded-3xl border border-slate-800 shadow-2xl overflow-hidden">
         <div className="p-8 grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
+          {/* Área Esquerda: Gauge / Velocímetro */}
           <div className="lg:col-span-4 flex flex-col items-center justify-center border-r border-slate-800/50 pr-8">
             <div className="relative w-full max-w-[200px] aspect-[1.6/1] flex items-end justify-center mb-2">
               <svg viewBox="0 0 100 60" className="w-full h-full overflow-visible">
+                {/* Background Track Segments */}
                 <path d="M 10 50 A 40 40 0 0 1 36.6 15.4" fill="none" stroke="#f43f5e" strokeWidth="10" strokeLinecap="round" opacity="0.15" />
                 <path d="M 36.6 15.4 A 40 40 0 0 1 63.4 15.4" fill="none" stroke="#f59e0b" strokeWidth="10" strokeLinecap="round" opacity="0.15" />
                 <path d="M 63.4 15.4 A 40 40 0 0 1 90 50" fill="none" stroke="#10b981" strokeWidth="10" strokeLinecap="round" opacity="0.15" />
-
-                <path
-                  d="M 10 50 A 40 40 0 0 1 90 50"
-                  fill="none"
-                  stroke={radarInfo.gaugeColor}
-                  strokeWidth="10"
-                  strokeLinecap="round"
-                  strokeDasharray="125.6"
+                
+                {/* Active Progress Arc (Optional, but adds depth) */}
+                <path 
+                  d="M 10 50 A 40 40 0 0 1 90 50" 
+                  fill="none" 
+                  stroke={radarInfo.gaugeColor} 
+                  strokeWidth="10" 
+                  strokeLinecap="round" 
+                  strokeDasharray="125.6" 
                   strokeDashoffset={125.6 - (125.6 * radarInfo.score) / 100}
                   opacity="0.3"
                   className="transition-all duration-1000 ease-out"
                 />
 
+                {/* Needle / Ponteiro */}
                 <g transform={`rotate(${(radarInfo.score / 100) * 180 - 90}, 50, 50)`} className="transition-transform duration-1000 ease-out">
                   <path d="M 50 50 L 50 10" stroke="white" strokeWidth="2.5" strokeLinecap="round" />
                   <circle cx="50" cy="50" r="5" fill="white" />
                   <circle cx="50" cy="50" r="2.5" fill="#0f172a" />
                 </g>
 
+                {/* Labels */}
                 <text x="8" y="58" fontSize="5" fontWeight="black" fill="#475569" textAnchor="middle">0</text>
                 <text x="92" y="58" fontSize="5" fontWeight="black" fill="#475569" textAnchor="middle">100</text>
               </svg>
-
+              
               <div className="absolute bottom-0 flex flex-col items-center">
                 <span className="text-5xl font-black text-white leading-none tracking-tighter">{radarInfo.score}</span>
               </div>
             </div>
-            <div className="mt-4 px-4 py-1 rounded-full bg-slate-800/50 border border-slate-700/50">
+            <div className={`mt-4 px-4 py-1 rounded-full bg-slate-800/50 border border-slate-700/50`}>
               <span className={`text-sm font-black uppercase tracking-[0.2em] ${radarInfo.statusColor}`}>{radarInfo.status}</span>
             </div>
           </div>
 
+          {/* Área Central: Título e Base */}
           <div className="lg:col-span-3 flex flex-col justify-center border-r border-slate-800/50 px-4">
             <h3 className="text-xl font-black text-white uppercase tracking-tight mb-3">Radar Financeiro</h3>
             <p className="text-[10px] font-bold text-slate-500 leading-relaxed uppercase tracking-wider">
@@ -635,6 +575,7 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
             </p>
           </div>
 
+          {/* Área Direita: Alertas Prioritários */}
           <div className="lg:col-span-5 grid grid-cols-1 gap-4 pl-4">
             <p className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em] mb-1">Alertas Prioritários</p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -657,11 +598,12 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
         </div>
       </div>
 
+      {/* 4. Segurança da Operação */}
       <div className="bg-slate-900 p-6 rounded-3xl border border-slate-800 shadow-xl">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
           <div className="flex items-center gap-4">
             <div className={`p-3 rounded-2xl ${operationalSecurity.bg}`}>
-              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={operationalSecurity.color}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={operationalSecurity.color}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
             </div>
             <div>
               <h4 className="text-sm font-black text-white uppercase tracking-tight">Segurança da Operação</h4>
@@ -691,7 +633,9 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* 5. Saldo real em caixa + fluxo final previsto + previsão de fluxo */}
         <div className="lg:col-span-1 space-y-4">
+          {/* Card de Saldo Real em Caixa */}
           <div className="bg-slate-900 p-5 rounded-3xl shadow-xl border border-slate-800 flex flex-col">
             <div className="flex justify-between items-start mb-3">
               <div>
@@ -701,12 +645,12 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
                 </h3>
               </div>
               <div className="bg-blue-500/10 p-2 rounded-xl">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-blue-400"><rect width="20" height="14" x="2" y="5" rx="2" /><line x1="2" x2="22" y1="10" y2="10" /></svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-blue-400"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>
               </div>
             </div>
-
+            
             <div className="space-y-2 mt-1">
-              {banks.map((bank) => (
+              {banks.map(bank => (
                 <div key={bank.id} className="flex justify-between items-center bg-slate-950/30 p-2 rounded-lg border border-slate-800/30">
                   <span className="text-[8px] font-bold text-slate-400 uppercase">{bank.name}</span>
                   <span className={`text-[9px] font-black ${stats.bankBalances[bank.id] >= 0 ? 'text-slate-200' : 'text-rose-400'}`}>
@@ -717,15 +661,12 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
             </div>
 
             <div className="mt-4 pt-3 border-t border-slate-800 flex justify-between items-center opacity-60">
-              <p className="text-[7px] font-black text-slate-500 uppercase">
-                Contas Negativas: {Object.values(stats.bankBalances).filter((v: number) => v < 0).length}
-              </p>
-              <p className="text-[7px] font-black text-slate-500 uppercase">
-                Maior Saldo: {formatCurrency(Math.max(0, ...(Object.values(stats.bankBalances) as number[])))}
-              </p>
+              <p className="text-[7px] font-black text-slate-500 uppercase">Contas Negativas: {Object.values(stats.bankBalances).filter((v: number) => v < 0).length}</p>
+              <p className="text-[7px] font-black text-slate-500 uppercase">Maior Saldo: {formatCurrency(Math.max(0, ...(Object.values(stats.bankBalances) as number[])))}</p>
             </div>
           </div>
 
+          {/* Card de Fluxo Previsto */}
           <div className={`p-5 rounded-3xl shadow-xl text-white transition-all duration-500 flex flex-col justify-between h-32 ${stats.projectedBalance >= 0 ? 'bg-emerald-600 shadow-emerald-900/20' : 'bg-rose-600 shadow-rose-900/20'}`}>
             <div>
               <p className="text-[9px] font-black opacity-80 uppercase tracking-widest mb-1">Fluxo Final Previsto</p>
@@ -735,11 +676,12 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
             </div>
             <div className="flex justify-between items-end">
               <p className="text-[8px] opacity-70 font-bold italic">Saldo Real - Saídas Pendentes</p>
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="opacity-30"><path d="m22 7-8.5 8.5-5-5L2 17" /><path d="M16 7h6v6" /></svg>
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="opacity-30"><path d="m22 7-8.5 8.5-5-5L2 17"/><path d="M16 7h6v6"/></svg>
             </div>
           </div>
         </div>
 
+        {/* Gráfico de Previsão de Fluxo */}
         <div className="lg:col-span-2 bg-slate-900 p-6 rounded-3xl shadow-xl border border-slate-800">
           <div className="flex justify-between items-center mb-6">
             <div>
@@ -756,14 +698,14 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
                 <AreaChart data={chartData}>
                   <defs>
                     <linearGradient id="colorSal" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.2} />
-                      <stop offset="95%" stopColor="#f43f5e" stopOpacity={0} />
+                      <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.2}/>
+                      <stop offset="95%" stopColor="#f43f5e" stopOpacity={0}/>
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1e293b" opacity={0.5} />
                   <XAxis dataKey="formattedDate" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: '#64748b', fontWeight: 'bold' }} />
                   <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: '#64748b', fontWeight: 'bold' }} tickFormatter={(val) => `R$${val}`} />
-                  <Tooltip
+                  <Tooltip 
                     contentStyle={{ backgroundColor: '#0f172a', borderRadius: '16px', border: '1px solid #1e293b', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)', padding: '12px' }}
                     itemStyle={{ color: '#fff', fontWeight: 'black', fontSize: '11px' }}
                     labelStyle={{ color: '#64748b', fontSize: '9px', fontWeight: 'bold', marginBottom: '4px', textTransform: 'uppercase' }}
@@ -776,7 +718,7 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
               </ResponsiveContainer>
             ) : (
               <div className="h-full flex flex-col items-center justify-center text-slate-600 gap-3">
-                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="opacity-10"><path d="M3 3v18h18" /><path d="m19 9-5 5-4-4-3 3" /></svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="opacity-10"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
                 <p className="text-[9px] font-black uppercase tracking-[0.2em] opacity-20 italic">Dados insuficientes para projeção</p>
               </div>
             )}
@@ -784,6 +726,7 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
         </div>
       </div>
 
+      {/* 6. Gestão de Contas (Saídas) */}
       <div className="bg-slate-900 p-6 rounded-3xl border border-slate-800 shadow-xl">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
           <div>
@@ -793,7 +736,7 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
             </h4>
             <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-0.5">Controle de compromissos financeiros</p>
           </div>
-
+          
           <div className="flex gap-3">
             <div className="bg-rose-500/10 px-3 py-1.5 rounded-xl border border-rose-500/20">
               <p className="text-[7px] font-black text-rose-500 uppercase tracking-widest mb-0.5">Vencidas</p>
@@ -805,28 +748,28 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
             </div>
           </div>
         </div>
-
+        
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {overdue.length > 0 && (
             <div className="space-y-3">
               <p className="text-[9px] font-black text-rose-500 uppercase tracking-widest flex items-center gap-2">
-                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" x2="12" y1="8" y2="12" /><line x1="12" x2="12.01" y1="16" y2="16" /></svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
                 Contas Vencidas
               </p>
               <div className="space-y-2">
-                {overdue.map((p) => <ItemCard key={p.id} p={p} isOverdue />)}
+                {overdue.map(p => <ItemCard key={p.id} p={p} isOverdue />)}
               </div>
             </div>
           )}
 
           <div className="space-y-3">
             <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
-              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2" /><line x1="16" x2="16" y1="2" y2="6" /><line x1="8" x2="8" y1="2" y2="6" /><line x1="3" x2="21" y1="10" y2="10" /></svg>
+              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>
               Próximos Compromissos
             </p>
             <div className="space-y-2">
               {upcoming.length > 0 ? (
-                upcoming.map((p) => <ItemCard key={p.id} p={p} />)
+                upcoming.map(p => <ItemCard key={p.id} p={p} />)
               ) : (
                 <div className="bg-slate-950/30 border border-dashed border-slate-800 rounded-xl p-6 text-center">
                   <p className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-700 italic">Nenhum compromisso agendado</p>
