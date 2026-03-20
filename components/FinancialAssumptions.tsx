@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { PaymentSettlementRule, Bank } from '../types';
 import { supabase } from '../src/lib/supabase';
 import { useActiveCompany } from '../src/contexts/CompanyContext';
@@ -20,8 +20,44 @@ type RuleRow = PaymentSettlementRule & {
   isNew?: boolean;
 };
 
+type TabKey = 'general' | 'cards' | 'balances';
+
+const TAB_STYLES: Record<TabKey, string> = {
+  general: 'Premissas Gerais',
+  cards: 'Regras de Cartões',
+  balances: 'Saldos Iniciais',
+};
+
+const normalizeText = (value: string | null | undefined) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+const isCardMethod = (rule: RuleRow) => {
+  const methodName = normalizeText(rule.payment_methods?.name);
+  return methodName.includes('cartao') || methodName.includes('cartão');
+};
+
+const sortRules = (items: RuleRow[]) => {
+  return [...items].sort((a, b) => {
+    const methodCompare = (a.payment_methods?.name || '').localeCompare(b.payment_methods?.name || '');
+    if (methodCompare !== 0) return methodCompare;
+
+    const aSpecificity = `${a.card_brand || ''} ${a.acquirer_name || ''}`.trim();
+    const bSpecificity = `${b.card_brand || ''} ${b.acquirer_name || ''}`.trim();
+
+    if (!aSpecificity && bSpecificity) return -1;
+    if (aSpecificity && !bSpecificity) return 1;
+
+    return aSpecificity.localeCompare(bSpecificity);
+  });
+};
+
 export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
   const { activeCompany } = useActiveCompany();
+  const [activeTab, setActiveTab] = useState<TabKey>('general');
   const [rules, setRules] = useState<RuleRow[]>([]);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -68,7 +104,7 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
           acquirer_name: rule.acquirer_name || '',
           notes: rule.notes || '',
           payment_methods: rule.payment_methods || { name: 'Desconhecido' },
-          isNew: false
+          isNew: false,
         }));
 
         const genericRuleMethodIds = new Set(
@@ -94,23 +130,10 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
             notes: '',
             is_active: true,
             payment_methods: { name: method.name },
-            isNew: true
+            isNew: true,
           }));
 
-        const allRules = [...existingRules, ...missingGenericRules].sort((a, b) => {
-          const methodCompare = (a.payment_methods?.name || '').localeCompare(b.payment_methods?.name || '');
-          if (methodCompare !== 0) return methodCompare;
-
-          const aSpecificity = `${a.card_brand || ''} ${a.acquirer_name || ''}`.trim();
-          const bSpecificity = `${b.card_brand || ''} ${b.acquirer_name || ''}`.trim();
-
-          if (!aSpecificity && bSpecificity) return -1;
-          if (aSpecificity && !bSpecificity) return 1;
-
-          return aSpecificity.localeCompare(bSpecificity);
-        });
-
-        setRules(allRules);
+        setRules(sortRules([...existingRules, ...missingGenericRules]));
       } catch (err: any) {
         console.error('Erro ao carregar premissas:', err);
         setError(err?.message || 'Não foi possível carregar as premissas financeiras.');
@@ -121,6 +144,22 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
 
     loadData();
   }, [activeCompany]);
+
+  const genericRules = useMemo(() => {
+    return sortRules(rules.filter((rule) => !rule.card_brand && !rule.acquirer_name));
+  }, [rules]);
+
+  const cardSpecificRules = useMemo(() => {
+    return sortRules(
+      rules.filter((rule) => (rule.card_brand || rule.acquirer_name) && isCardMethod(rule))
+    );
+  }, [rules]);
+
+  const genericCardRules = useMemo(() => {
+    return sortRules(
+      rules.filter((rule) => !rule.card_brand && !rule.acquirer_name && isCardMethod(rule))
+    );
+  }, [rules]);
 
   const handleUpdateRule = (id: string, field: keyof RuleRow, value: any) => {
     setRules((prev) =>
@@ -155,25 +194,11 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
       notes: '',
       is_active: true,
       payment_methods: { name: methodName },
-      isNew: true
+      isNew: true,
     };
 
-    setRules((prev) => {
-      const next = [...prev, newRule];
-      return next.sort((a, b) => {
-        const methodCompare = (a.payment_methods?.name || '').localeCompare(b.payment_methods?.name || '');
-        if (methodCompare !== 0) return methodCompare;
-
-        const aSpecificity = `${a.card_brand || ''} ${a.acquirer_name || ''}`.trim();
-        const bSpecificity = `${b.card_brand || ''} ${b.acquirer_name || ''}`.trim();
-
-        if (!aSpecificity && bSpecificity) return -1;
-        if (aSpecificity && !bSpecificity) return 1;
-
-        return aSpecificity.localeCompare(bSpecificity);
-      });
-    });
-
+    setRules((prev) => sortRules([...prev, newRule]));
+    setActiveTab('cards');
     setSuccess(false);
     setError(null);
   };
@@ -207,34 +232,41 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
         ((existingRows as { id: string }[]) || []).map((row) => row.id)
       );
 
-      const normalizedRules = rules.map(({ payment_methods, isNew, ...rule }) => ({
-        ...rule,
-        company_id: activeCompany.id,
-        payment_method_id: rule.payment_method_id,
-        settlement_days: Number(rule.settlement_days) || 0,
-        receives_same_day: !!rule.receives_same_day,
-        default_status: rule.default_status,
-        fee_percent: Number(rule.fee_percent) || 0,
-        fee_fixed: Number(rule.fee_fixed) || 0,
-        default_bank_id: rule.default_bank_id || null,
-        card_brand: (rule.card_brand || '').trim() || null,
-        acquirer_name: (rule.acquirer_name || '').trim() || null,
-        notes: rule.notes || '',
-        is_active: rule.is_active ?? true
-      }));
+      const normalizedRules = rules.map(({ payment_methods, isNew, ...rule }) => {
+        const cardMethod = isCardMethod({
+          ...rule,
+          payment_methods,
+        } as RuleRow);
+
+        return {
+          ...rule,
+          company_id: activeCompany.id,
+          payment_method_id: rule.payment_method_id,
+          settlement_days: Number(rule.settlement_days) || 0,
+          receives_same_day: !!rule.receives_same_day,
+          default_status: rule.default_status,
+          fee_percent: Number(rule.fee_percent) || 0,
+          fee_fixed: Number(rule.fee_fixed) || 0,
+          default_bank_id: rule.default_bank_id || null,
+          card_brand: cardMethod ? ((rule.card_brand || '').trim() || null) : null,
+          acquirer_name: cardMethod ? ((rule.acquirer_name || '').trim() || null) : null,
+          notes: rule.notes || '',
+          is_active: rule.is_active ?? true,
+        };
+      });
 
       const rulesToInsert = normalizedRules
         .filter((rule) => !existingIds.has(rule.id))
         .map((rule) => ({
           ...rule,
-          created_at: now
+          created_at: now,
         }));
 
       const rulesToUpdate = normalizedRules
         .filter((rule) => existingIds.has(rule.id))
         .map((rule) => ({
           ...rule,
-          updated_at: now
+          updated_at: now,
         }));
 
       if (rulesToInsert.length > 0) {
@@ -242,9 +274,7 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
           .from('payment_settlement_rules')
           .insert(rulesToInsert);
 
-        if (insertError) {
-          throw insertError;
-        }
+        if (insertError) throw insertError;
       }
 
       if (rulesToUpdate.length > 0) {
@@ -252,9 +282,7 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
           .from('payment_settlement_rules')
           .upsert(rulesToUpdate, { onConflict: 'id' });
 
-        if (updateError) {
-          throw updateError;
-        }
+        if (updateError) throw updateError;
       }
 
       setRules((prev) => prev.map((rule) => ({ ...rule, isNew: false })));
@@ -275,6 +303,329 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
     }
   };
 
+  const renderGeneralTable = () => (
+    <div className="bg-slate-900 rounded-[2rem] border border-slate-800 overflow-hidden shadow-2xl">
+      <div className="overflow-auto custom-scrollbar max-h-[68vh]">
+        <table className="w-full text-left border-collapse min-w-[980px]">
+          <thead className="sticky top-0 z-10">
+            <tr className="bg-slate-950 text-slate-500 text-[8px] uppercase tracking-[0.18em] font-black border-b border-slate-800">
+              <th className="px-6 py-4">Meio de Pagamento</th>
+              <th className="px-3 py-4 text-center">Prazo</th>
+              <th className="px-3 py-4 text-center">Mesmo Dia?</th>
+              <th className="px-3 py-4 text-center">Status</th>
+              <th className="px-3 py-4 text-center">Taxa %</th>
+              <th className="px-3 py-4 text-center">Taxa Fixa</th>
+              <th className="px-4 py-4">Observações</th>
+              <th className="px-4 py-4 text-center">Ações</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-800/50">
+            {genericRules.map((rule) => {
+              const cardMethod = isCardMethod(rule);
+
+              return (
+                <tr key={rule.id} className="hover:bg-slate-800/20 transition-colors">
+                  <td className="px-6 py-4 align-middle">
+                    <div className="flex flex-col gap-0.5 leading-tight">
+                      <span className="text-[11px] font-black text-slate-200 uppercase tracking-tight">
+                        {rule.payment_methods?.name || 'Desconhecido'}
+                      </span>
+                      <span className="text-[8px] font-black uppercase tracking-widest text-cyan-400">
+                        Regra Genérica
+                      </span>
+                    </div>
+                  </td>
+
+                  <td className="px-3 py-4 text-center">
+                    <input
+                      type="number"
+                      value={rule.settlement_days}
+                      onChange={(e) =>
+                        handleUpdateRule(rule.id, 'settlement_days', parseInt(e.target.value, 10) || 0)
+                      }
+                      className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
+                    />
+                  </td>
+
+                  <td className="px-3 py-4 text-center">
+                    <div className="flex flex-col items-center gap-1">
+                      <button
+                        onClick={() =>
+                          handleUpdateRule(rule.id, 'receives_same_day', !rule.receives_same_day)
+                        }
+                        className={`w-11 h-5 rounded-full p-0.5 transition-all duration-300 relative ${
+                          rule.receives_same_day ? 'bg-rose-600' : 'bg-slate-800'
+                        }`}
+                      >
+                        <div
+                          className={`w-4 h-4 bg-white rounded-full shadow-md transition-all duration-300 ${
+                            rule.receives_same_day ? 'translate-x-6' : 'translate-x-0'
+                          }`}
+                        ></div>
+                      </button>
+                      {rule.receives_same_day && (
+                        <span className="text-[7px] font-black text-rose-500 uppercase tracking-tighter">
+                          D+0
+                        </span>
+                      )}
+                    </div>
+                  </td>
+
+                  <td className="px-3 py-4 text-center">
+                    <select
+                      value={rule.default_status}
+                      onChange={(e) => handleUpdateRule(rule.id, 'default_status', e.target.value)}
+                      className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-[9px] font-black text-slate-300 outline-none focus:border-rose-500 transition-all uppercase tracking-wider w-[132px]"
+                    >
+                      <option value="LIQUIDADO">LIQUIDADO</option>
+                      <option value="PROVISIONADO">PROVISIONADO</option>
+                    </select>
+                  </td>
+
+                  <td className="px-3 py-4 text-center">
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={rule.fee_percent}
+                      onChange={(e) =>
+                        handleUpdateRule(rule.id, 'fee_percent', parseFloat(e.target.value) || 0)
+                      }
+                      className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
+                    />
+                  </td>
+
+                  <td className="px-3 py-4 text-center">
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={rule.fee_fixed}
+                      onChange={(e) =>
+                        handleUpdateRule(rule.id, 'fee_fixed', parseFloat(e.target.value) || 0)
+                      }
+                      className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
+                    />
+                  </td>
+
+                  <td className="px-4 py-4">
+                    <input
+                      type="text"
+                      value={rule.notes || ''}
+                      onChange={(e) => handleUpdateRule(rule.id, 'notes', e.target.value)}
+                      placeholder="Notas..."
+                      className="w-full min-w-[150px] bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[11px] font-medium text-slate-400 outline-none focus:border-rose-500 transition-all"
+                    />
+                  </td>
+
+                  <td className="px-4 py-4 text-center">
+                    {cardMethod ? (
+                      <button
+                        onClick={() => handleAddSpecificRule(rule)}
+                        className="px-2.5 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest bg-slate-800 hover:bg-slate-700 text-cyan-400 transition-all whitespace-nowrap"
+                      >
+                        + Regra específica
+                      </button>
+                    ) : (
+                      <span className="text-[9px] font-black uppercase tracking-widest text-slate-600">
+                        —
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
+  const renderCardsTable = () => (
+    <div className="space-y-4">
+      <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 px-4 py-3 text-sm text-cyan-200">
+        Aqui ficam apenas as regras específicas de cartões. Preencha pelo menos <strong>bandeira</strong> ou <strong>operadora</strong>.
+      </div>
+
+      <div className="bg-slate-900 rounded-[2rem] border border-slate-800 overflow-hidden shadow-2xl">
+        <div className="overflow-auto custom-scrollbar max-h-[68vh]">
+          <table className="w-full text-left border-collapse min-w-[1180px]">
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-slate-950 text-slate-500 text-[8px] uppercase tracking-[0.18em] font-black border-b border-slate-800">
+                <th className="px-6 py-4">Meio de Pagamento</th>
+                <th className="px-3 py-4 text-center">Bandeira</th>
+                <th className="px-3 py-4 text-center">Operadora</th>
+                <th className="px-3 py-4 text-center">Prazo</th>
+                <th className="px-3 py-4 text-center">Mesmo Dia?</th>
+                <th className="px-3 py-4 text-center">Status</th>
+                <th className="px-3 py-4 text-center">Taxa %</th>
+                <th className="px-3 py-4 text-center">Taxa Fixa</th>
+                <th className="px-4 py-4">Observações</th>
+                <th className="px-4 py-4 text-center">Ações</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/50">
+              {cardSpecificRules.length === 0 ? (
+                <tr>
+                  <td colSpan={10} className="px-6 py-10 text-center text-sm font-semibold text-slate-500">
+                    Nenhuma regra específica de cartão cadastrada ainda.
+                  </td>
+                </tr>
+              ) : (
+                cardSpecificRules.map((rule) => (
+                  <tr key={rule.id} className="hover:bg-slate-800/20 transition-colors">
+                    <td className="px-6 py-4">
+                      <div className="flex flex-col gap-0.5 leading-tight">
+                        <span className="text-[11px] font-black text-slate-200 uppercase tracking-tight">
+                          {rule.payment_methods?.name || 'Desconhecido'}
+                        </span>
+                        <span className="text-[8px] font-black uppercase tracking-widest text-amber-400">
+                          Regra Específica
+                        </span>
+                      </div>
+                    </td>
+
+                    <td className="px-3 py-4 text-center">
+                      <input
+                        type="text"
+                        value={rule.card_brand || ''}
+                        onChange={(e) => handleUpdateRule(rule.id, 'card_brand', e.target.value)}
+                        placeholder="VISA"
+                        className="w-24 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center uppercase"
+                      />
+                    </td>
+
+                    <td className="px-3 py-4 text-center">
+                      <input
+                        type="text"
+                        value={rule.acquirer_name || ''}
+                        onChange={(e) => handleUpdateRule(rule.id, 'acquirer_name', e.target.value)}
+                        placeholder="STONE"
+                        className="w-28 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center uppercase"
+                      />
+                    </td>
+
+                    <td className="px-3 py-4 text-center">
+                      <input
+                        type="number"
+                        value={rule.settlement_days}
+                        onChange={(e) =>
+                          handleUpdateRule(rule.id, 'settlement_days', parseInt(e.target.value, 10) || 0)
+                        }
+                        className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
+                      />
+                    </td>
+
+                    <td className="px-3 py-4 text-center">
+                      <div className="flex flex-col items-center gap-1">
+                        <button
+                          onClick={() =>
+                            handleUpdateRule(rule.id, 'receives_same_day', !rule.receives_same_day)
+                          }
+                          className={`w-11 h-5 rounded-full p-0.5 transition-all duration-300 relative ${
+                            rule.receives_same_day ? 'bg-rose-600' : 'bg-slate-800'
+                          }`}
+                        >
+                          <div
+                            className={`w-4 h-4 bg-white rounded-full shadow-md transition-all duration-300 ${
+                              rule.receives_same_day ? 'translate-x-6' : 'translate-x-0'
+                            }`}
+                          ></div>
+                        </button>
+                        {rule.receives_same_day && (
+                          <span className="text-[7px] font-black text-rose-500 uppercase tracking-tighter">
+                            D+0
+                          </span>
+                        )}
+                      </div>
+                    </td>
+
+                    <td className="px-3 py-4 text-center">
+                      <select
+                        value={rule.default_status}
+                        onChange={(e) => handleUpdateRule(rule.id, 'default_status', e.target.value)}
+                        className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-[9px] font-black text-slate-300 outline-none focus:border-rose-500 transition-all uppercase tracking-wider w-[132px]"
+                      >
+                        <option value="LIQUIDADO">LIQUIDADO</option>
+                        <option value="PROVISIONADO">PROVISIONADO</option>
+                      </select>
+                    </td>
+
+                    <td className="px-3 py-4 text-center">
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={rule.fee_percent}
+                        onChange={(e) =>
+                          handleUpdateRule(rule.id, 'fee_percent', parseFloat(e.target.value) || 0)
+                        }
+                        className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
+                      />
+                    </td>
+
+                    <td className="px-3 py-4 text-center">
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={rule.fee_fixed}
+                        onChange={(e) =>
+                          handleUpdateRule(rule.id, 'fee_fixed', parseFloat(e.target.value) || 0)
+                        }
+                        className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
+                      />
+                    </td>
+
+                    <td className="px-4 py-4">
+                      <input
+                        type="text"
+                        value={rule.notes || ''}
+                        onChange={(e) => handleUpdateRule(rule.id, 'notes', e.target.value)}
+                        placeholder="Notas..."
+                        className="w-full min-w-[150px] bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[11px] font-medium text-slate-400 outline-none focus:border-rose-500 transition-all"
+                      />
+                    </td>
+
+                    <td className="px-4 py-4 text-center">
+                      {rule.isNew ? (
+                        <button
+                          onClick={() => handleRemoveUnsavedRule(rule.id)}
+                          className="px-2.5 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest bg-slate-950 hover:bg-slate-900 text-rose-400 transition-all whitespace-nowrap border border-slate-800"
+                        >
+                          Remover
+                        </button>
+                      ) : (
+                        <span className="text-[9px] font-black uppercase tracking-widest text-slate-600">
+                          Salva
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {genericCardRules.length > 0 && (
+        <div className="rounded-2xl border border-slate-800 bg-slate-950/60 px-4 py-4">
+          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500 mb-3">
+            Atalhos para nova regra específica
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {genericCardRules.map((rule) => (
+              <button
+                key={rule.id}
+                onClick={() => handleAddSpecificRule(rule)}
+                className="px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest bg-slate-800 hover:bg-slate-700 text-cyan-400 transition-all"
+              >
+                + {rule.payment_methods?.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-24 gap-4">
@@ -294,7 +645,7 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
             Premissas Financeiras
           </h2>
           <p className="text-slate-500 text-sm font-medium">
-            Configure regras gerais e específicas por bandeira e operadora para cada meio de pagamento.
+            Configure regras gerais, regras específicas de cartões e saldos iniciais sem misturar contextos.
           </p>
         </div>
 
@@ -375,207 +726,29 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
         </div>
       )}
 
-      <div className="bg-slate-900 rounded-[2rem] border border-slate-800 overflow-hidden shadow-2xl">
-        {rules.length === 0 ? (
-          <div className="py-24 text-center px-8">
-            <div className="w-20 h-20 bg-slate-950 rounded-3xl flex items-center justify-center border border-slate-800 mx-auto mb-6">
-              <svg
-                className="text-slate-700"
-                xmlns="http://www.w3.org/2000/svg"
-                width="40"
-                height="40"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M3 10h18" />
-                <path d="M7 15h.01" />
-                <path d="M11 15h.01" />
-                <rect width="18" height="14" x="3" y="5" rx="2" />
-              </svg>
-            </div>
-            <h3 className="text-xl font-black text-white uppercase tracking-tight mb-2">
-              Nenhuma regra encontrada
-            </h3>
-            <p className="text-slate-500 max-w-md mx-auto text-sm leading-relaxed font-medium">
-              Não existem premissas financeiras configuradas para esta empresa.
-              Certifique-se de que os meios de pagamento estão cadastrados.
-            </p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto custom-scrollbar">
-            <div className="min-w-[1180px]">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-950 text-slate-500 text-[8px] uppercase tracking-[0.18em] font-black border-b border-slate-800">
-                    <th className="px-6 py-4">Meio de Pagamento</th>
-                    <th className="px-3 py-4 text-center">Bandeira</th>
-                    <th className="px-3 py-4 text-center">Operadora</th>
-                    <th className="px-3 py-4 text-center">Prazo</th>
-                    <th className="px-3 py-4 text-center">Mesmo Dia?</th>
-                    <th className="px-3 py-4 text-center">Status</th>
-                    <th className="px-3 py-4 text-center">Taxa %</th>
-                    <th className="px-3 py-4 text-center">Taxa Fixa</th>
-                    <th className="px-4 py-4">Observações</th>
-                    <th className="px-4 py-4 text-center">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/50">
-                  {rules.map((rule) => {
-                    const isGeneric = !rule.card_brand && !rule.acquirer_name;
+      <div className="flex flex-wrap gap-2">
+        {(Object.keys(TAB_STYLES) as TabKey[]).map((tab) => {
+          const isActive = activeTab === tab;
 
-                    return (
-                      <tr key={rule.id} className="hover:bg-slate-800/20 transition-colors group">
-                        <td className="px-6 py-4 align-middle">
-                          <div className="flex flex-col gap-0.5 leading-tight">
-                            <span className="text-[11px] font-black text-slate-200 uppercase tracking-tight">
-                              {rule.payment_methods?.name || 'Desconhecido'}
-                            </span>
-                            <span
-                              className={`text-[8px] font-black uppercase tracking-widest ${
-                                isGeneric ? 'text-cyan-400' : 'text-amber-400'
-                              }`}
-                            >
-                              {isGeneric ? 'Regra Genérica' : 'Regra Específica'}
-                            </span>
-                          </div>
-                        </td>
-
-                        <td className="px-3 py-4 text-center align-middle">
-                          <input
-                            type="text"
-                            value={rule.card_brand || ''}
-                            onChange={(e) => handleUpdateRule(rule.id, 'card_brand', e.target.value)}
-                            placeholder="VISA"
-                            className="w-24 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center uppercase"
-                          />
-                        </td>
-
-                        <td className="px-3 py-4 text-center align-middle">
-                          <input
-                            type="text"
-                            value={rule.acquirer_name || ''}
-                            onChange={(e) => handleUpdateRule(rule.id, 'acquirer_name', e.target.value)}
-                            placeholder="STONE"
-                            className="w-28 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center uppercase"
-                          />
-                        </td>
-
-                        <td className="px-3 py-4 text-center align-middle">
-                          <input
-                            type="number"
-                            value={rule.settlement_days}
-                            onChange={(e) =>
-                              handleUpdateRule(rule.id, 'settlement_days', parseInt(e.target.value, 10) || 0)
-                            }
-                            className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
-                          />
-                        </td>
-
-                        <td className="px-3 py-4 text-center align-middle">
-                          <div className="flex flex-col items-center gap-1">
-                            <button
-                              onClick={() =>
-                                handleUpdateRule(rule.id, 'receives_same_day', !rule.receives_same_day)
-                              }
-                              className={`w-11 h-5 rounded-full p-0.5 transition-all duration-300 relative ${
-                                rule.receives_same_day ? 'bg-rose-600' : 'bg-slate-800'
-                              }`}
-                            >
-                              <div
-                                className={`w-4 h-4 bg-white rounded-full shadow-md transition-all duration-300 ${
-                                  rule.receives_same_day ? 'translate-x-6' : 'translate-x-0'
-                                }`}
-                              ></div>
-                            </button>
-                            {rule.receives_same_day && (
-                              <span className="text-[7px] font-black text-rose-500 uppercase tracking-tighter">
-                                D+0
-                              </span>
-                            )}
-                          </div>
-                        </td>
-
-                        <td className="px-3 py-4 text-center align-middle">
-                          <select
-                            value={rule.default_status}
-                            onChange={(e) =>
-                              handleUpdateRule(rule.id, 'default_status', e.target.value)
-                            }
-                            className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-[9px] font-black text-slate-300 outline-none focus:border-rose-500 transition-all uppercase tracking-wider w-[132px]"
-                          >
-                            <option value="LIQUIDADO">LIQUIDADO</option>
-                            <option value="PROVISIONADO">PROVISIONADO</option>
-                          </select>
-                        </td>
-
-                        <td className="px-3 py-4 text-center align-middle">
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={rule.fee_percent}
-                            onChange={(e) =>
-                              handleUpdateRule(rule.id, 'fee_percent', parseFloat(e.target.value) || 0)
-                            }
-                            className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
-                          />
-                        </td>
-
-                        <td className="px-3 py-4 text-center align-middle">
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={rule.fee_fixed}
-                            onChange={(e) =>
-                              handleUpdateRule(rule.id, 'fee_fixed', parseFloat(e.target.value) || 0)
-                            }
-                            className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
-                          />
-                        </td>
-
-                        <td className="px-4 py-4 align-middle">
-                          <input
-                            type="text"
-                            value={rule.notes || ''}
-                            onChange={(e) => handleUpdateRule(rule.id, 'notes', e.target.value)}
-                            placeholder="Notas..."
-                            className="w-full min-w-[150px] bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[11px] font-medium text-slate-400 outline-none focus:border-rose-500 transition-all"
-                          />
-                        </td>
-
-                        <td className="px-4 py-4 text-center align-middle">
-                          <div className="flex flex-col items-center gap-1.5">
-                            <button
-                              onClick={() => handleAddSpecificRule(rule)}
-                              className="px-2.5 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest bg-slate-800 hover:bg-slate-700 text-cyan-400 transition-all whitespace-nowrap"
-                            >
-                              + Regra específica
-                            </button>
-
-                            {rule.isNew && !isGeneric && (
-                              <button
-                                onClick={() => handleRemoveUnsavedRule(rule.id)}
-                                className="px-2.5 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest bg-slate-950 hover:bg-slate-900 text-rose-400 transition-all whitespace-nowrap border border-slate-800"
-                              >
-                                Remover
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
+          return (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-[0.18em] transition-all ${
+                isActive
+                  ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/20'
+                  : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
+              }`}
+            >
+              {TAB_STYLES[tab]}
+            </button>
+          );
+        })}
       </div>
 
-      {activeCompany && (
+      {activeTab === 'general' && renderGeneralTable()}
+      {activeTab === 'cards' && renderCardsTable()}
+      {activeTab === 'balances' && activeCompany && (
         <BankOpeningBalances
           companyId={activeCompany.id}
           banks={banks}
