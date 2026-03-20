@@ -1,4 +1,3 @@
-
 export enum MainGroup {
   DESPESAS = 'DESPESAS',
   RECEITAS = 'RECEITAS',
@@ -168,7 +167,9 @@ export interface PaymentSettlementRule {
   default_status: 'LIQUIDADO' | 'PROVISIONADO';
   fee_percent: number;
   fee_fixed: number;
-  default_bank_id?: string;
+  default_bank_id?: string | null;
+  card_brand?: string | null;
+  acquirer_name?: string | null;
   notes?: string;
   is_active: boolean;
   payment_methods?: {
