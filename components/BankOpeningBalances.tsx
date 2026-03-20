@@ -218,10 +218,10 @@ export const BankOpeningBalances: React.FC<BankOpeningBalancesProps> = ({
           </div>
         ) : (
           <>
-            <div className="rounded-[2rem] border border-slate-800 overflow-hidden shadow-2xl">
-              <div className="overflow-auto custom-scrollbar max-h-[68vh]">
+            <div className="relative rounded-[2rem] border border-slate-800 overflow-hidden shadow-2xl">
+              <div className="relative overflow-auto custom-scrollbar max-h-[68vh]">
                 <table className="w-full min-w-[920px] text-left border-collapse">
-                  <thead className="sticky top-0 z-20">
+                  <thead className="sticky top-0 z-20 bg-slate-950">
                     <tr className="bg-slate-950 text-slate-500 text-[8px] uppercase tracking-[0.18em] font-black border-b border-slate-800">
                       <th className="px-5 py-3">Banco</th>
                       <th className="px-5 py-3">Saldo Inicial (R$)</th>
@@ -232,13 +232,13 @@ export const BankOpeningBalances: React.FC<BankOpeningBalancesProps> = ({
                   <tbody className="divide-y divide-slate-800 bg-slate-900/60">
                     {rows.map((row) => (
                       <tr key={row.bankId} className="hover:bg-slate-900/90 transition-colors">
-                        <td className="px-5 py-3 align-middle">
+                        <td className="px-5 py-2.5 align-middle">
                           <div className="font-black uppercase text-white text-[11px]">
                             {row.bankName}
                           </div>
                         </td>
 
-                        <td className="px-5 py-3 align-middle">
+                        <td className="px-5 py-2.5 align-middle">
                           <input
                             type="text"
                             value={row.openingBalance}
@@ -246,18 +246,18 @@ export const BankOpeningBalances: React.FC<BankOpeningBalancesProps> = ({
                               handleRowChange(row.bankId, 'openingBalance', e.target.value)
                             }
                             placeholder="0.00"
-                            className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-[11px] font-bold text-white outline-none transition focus:border-emerald-500"
+                            className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2 text-[11px] font-bold text-white outline-none transition focus:border-emerald-500"
                           />
                         </td>
 
-                        <td className="px-5 py-3 align-middle">
+                        <td className="px-5 py-2.5 align-middle">
                           <input
                             type="date"
                             value={row.referenceDate}
                             onChange={(e) =>
                               handleRowChange(row.bankId, 'referenceDate', e.target.value)
                             }
-                            className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-[11px] font-bold text-white outline-none transition focus:border-emerald-500"
+                            className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2 text-[11px] font-bold text-white outline-none transition focus:border-emerald-500"
                           />
                         </td>
                       </tr>

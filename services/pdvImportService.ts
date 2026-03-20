@@ -13,22 +13,82 @@ export interface PdvImportPreview {
   fileHash: string;
 }
 
+const normalizeText = (value: string | null | undefined) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
 const buildRuleMaps = (rules: PaymentSettlementRule[]) => {
-  const byPaymentMethodId = new Map<string, PaymentSettlementRule>();
-  const byMethodName = new Map<string, PaymentSettlementRule>();
+  const byPaymentMethodId = new Map<string, PaymentSettlementRule[]>();
+  const byMethodName = new Map<string, PaymentSettlementRule[]>();
 
   for (const rule of rules) {
     if (rule.payment_method_id) {
-      byPaymentMethodId.set(rule.payment_method_id, rule);
+      const existing = byPaymentMethodId.get(rule.payment_method_id) || [];
+      existing.push(rule);
+      byPaymentMethodId.set(rule.payment_method_id, existing);
     }
 
-    const methodName = rule.payment_methods?.name?.trim().toLowerCase();
+    const methodName = normalizeText(rule.payment_methods?.name || '');
     if (methodName) {
-      byMethodName.set(methodName, rule);
+      const existing = byMethodName.get(methodName) || [];
+      existing.push(rule);
+      byMethodName.set(methodName, existing);
     }
   }
 
   return { byPaymentMethodId, byMethodName };
+};
+
+const resolveRuleForRow = (
+  row: NormalizedPdvClosing,
+  settlementRules: PaymentSettlementRule[]
+): PaymentSettlementRule | null => {
+  const { byPaymentMethodId, byMethodName } = buildRuleMaps(settlementRules);
+  const candidateRules = row.paymentMethodId
+    ? byPaymentMethodId.get(row.paymentMethodId) || []
+    : byMethodName.get(normalizeText(row.rawLabel || '')) || [];
+
+  if (candidateRules.length === 0) {
+    return null;
+  }
+
+  const normalizedBrand = normalizeText(row.cardBrand);
+  const normalizedAcquirer = normalizeText(row.acquirerName);
+
+  const exactRule = candidateRules.find((rule) => {
+    const ruleBrand = normalizeText(rule.card_brand);
+    const ruleAcquirer = normalizeText(rule.acquirer_name);
+    return !!ruleBrand && !!ruleAcquirer && ruleBrand === normalizedBrand && ruleAcquirer === normalizedAcquirer;
+  });
+
+  if (exactRule) return exactRule;
+
+  const brandRule = candidateRules.find((rule) => {
+    const ruleBrand = normalizeText(rule.card_brand);
+    const ruleAcquirer = normalizeText(rule.acquirer_name);
+    return !!ruleBrand && !ruleAcquirer && ruleBrand === normalizedBrand;
+  });
+
+  if (brandRule) return brandRule;
+
+  const acquirerRule = candidateRules.find((rule) => {
+    const ruleBrand = normalizeText(rule.card_brand);
+    const ruleAcquirer = normalizeText(rule.acquirer_name);
+    return !ruleBrand && !!ruleAcquirer && ruleAcquirer === normalizedAcquirer;
+  });
+
+  if (acquirerRule) return acquirerRule;
+
+  const genericRule = candidateRules.find((rule) => {
+    const ruleBrand = normalizeText(rule.card_brand);
+    const ruleAcquirer = normalizeText(rule.acquirer_name);
+    return !ruleBrand && !ruleAcquirer;
+  });
+
+  return genericRule || candidateRules[0] || null;
 };
 
 const applyRuleToRow = (
@@ -105,20 +165,8 @@ const recalculateRowsFromFinalMapping = (
   rows: NormalizedPdvClosing[],
   settlementRules: PaymentSettlementRule[]
 ): NormalizedPdvClosing[] => {
-  const { byPaymentMethodId, byMethodName } = buildRuleMaps(settlementRules);
-
   return rows.map((row) => {
-    let matchedRule: PaymentSettlementRule | null = null;
-
-    if (row.paymentMethodId && byPaymentMethodId.has(row.paymentMethodId)) {
-      matchedRule = byPaymentMethodId.get(row.paymentMethodId)!;
-    } else {
-      const rawLabel = row.rawLabel?.trim().toLowerCase();
-      if (rawLabel && byMethodName.has(rawLabel)) {
-        matchedRule = byMethodName.get(rawLabel)!;
-      }
-    }
-
+    const matchedRule = resolveRuleForRow(row, settlementRules);
     return applyRuleToRow(row, matchedRule);
   });
 };

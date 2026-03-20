@@ -60,8 +60,8 @@ const ScrollTableShell: React.FC<{
   minWidth: string;
 }> = ({ children, minWidth }) => {
   return (
-    <div className="bg-slate-900 rounded-[2rem] border border-slate-800 overflow-hidden shadow-2xl">
-      <div className="overflow-auto custom-scrollbar max-h-[68vh]">
+    <div className="relative bg-slate-900 rounded-[2rem] border border-slate-800 overflow-hidden shadow-2xl">
+      <div className="relative overflow-auto custom-scrollbar max-h-[68vh]">
         <div style={{ minWidth }}>{children}</div>
       </div>
     </div>
@@ -174,6 +174,16 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
     );
   }, [rules]);
 
+  const specificRuleCountByMethodId = useMemo(() => {
+    const counts = new Map<string, number>();
+
+    for (const rule of cardSpecificRules) {
+      counts.set(rule.payment_method_id, (counts.get(rule.payment_method_id) || 0) + 1);
+    }
+
+    return counts;
+  }, [cardSpecificRules]);
+
   const handleUpdateRule = (id: string, field: keyof RuleRow, value: any) => {
     setRules((prev) =>
       prev.map((rule) =>
@@ -222,6 +232,49 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
     setError(null);
   };
 
+  const handleDeleteRule = async (rule: RuleRow) => {
+    if (rule.isNew) {
+      handleRemoveUnsavedRule(rule.id);
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Deseja desativar a regra de ${rule.payment_methods?.name || 'cartão'}${
+        rule.card_brand || rule.acquirer_name
+          ? ` (${[rule.card_brand, rule.acquirer_name].filter(Boolean).join(' / ')})`
+          : ''
+      }?`
+    );
+
+    if (!confirmed) return;
+
+    setSaving(true);
+    setError(null);
+    setSuccess(false);
+
+    try {
+      const { error: updateError } = await supabase
+        .from('payment_settlement_rules')
+        .update({
+          is_active: false,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', rule.id)
+        .eq('company_id', activeCompany?.id || '');
+
+      if (updateError) throw updateError;
+
+      setRules((prev) => prev.filter((currentRule) => currentRule.id !== rule.id));
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+    } catch (err: any) {
+      console.error('Erro ao desativar regra:', err);
+      setError(err?.message || 'Não foi possível desativar a regra.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleSave = async () => {
     if (!activeCompany) return;
 
@@ -231,6 +284,43 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
 
     try {
       const now = new Date().toISOString();
+
+      const invalidSpecificRule = rules.find((rule) => {
+        if (!isCardMethod(rule)) return false;
+        const hasSpecificData = !!normalizeText(rule.card_brand) || !!normalizeText(rule.acquirer_name);
+        const isGeneric = !normalizeText(rule.card_brand) && !normalizeText(rule.acquirer_name);
+        return !isGeneric && !hasSpecificData;
+      });
+
+      if (invalidSpecificRule) {
+        throw new Error('Existe regra específica de cartão sem bandeira e sem operadora.');
+      }
+
+      const duplicateSpecificRule = (() => {
+        const signatures = new Set<string>();
+
+        for (const rule of rules) {
+          if (!isCardMethod(rule)) continue;
+
+          const brand = normalizeText(rule.card_brand);
+          const acquirer = normalizeText(rule.acquirer_name);
+          const signature = `${rule.payment_method_id}::${brand}::${acquirer}`;
+
+          if (signatures.has(signature)) {
+            return rule;
+          }
+
+          signatures.add(signature);
+        }
+
+        return null;
+      })();
+
+      if (duplicateSpecificRule) {
+        throw new Error(
+          `Há regras duplicadas para ${duplicateSpecificRule.payment_methods?.name || 'cartão'}. Revise bandeira e operadora antes de salvar.`
+        );
+      }
 
       const { data: existingRows, error: existingRowsError } = await supabase
         .from('payment_settlement_rules')
@@ -319,7 +409,7 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
   const renderGeneralTable = () => (
     <ScrollTableShell minWidth="980px">
       <table className="w-full text-left border-collapse">
-        <thead className="sticky top-0 z-20">
+        <thead className="sticky top-0 z-20 bg-slate-950">
           <tr className="bg-slate-950 text-slate-500 text-[8px] uppercase tracking-[0.18em] font-black border-b border-slate-800">
             <th className="px-6 py-4">Meio de Pagamento</th>
             <th className="px-3 py-4 text-center">Prazo</th>
@@ -334,32 +424,40 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
         <tbody className="divide-y divide-slate-800/50">
           {genericRules.map((rule) => {
             const cardMethod = isCardMethod(rule);
+            const specificCount = specificRuleCountByMethodId.get(rule.payment_method_id) || 0;
 
             return (
               <tr key={rule.id} className="hover:bg-slate-800/20 transition-colors">
-                <td className="px-6 py-4 align-middle">
+                <td className="px-6 py-3 align-middle">
                   <div className="flex flex-col gap-0.5 leading-tight">
                     <span className="text-[11px] font-black text-slate-200 uppercase tracking-tight">
                       {rule.payment_methods?.name || 'Desconhecido'}
                     </span>
-                    <span className="text-[8px] font-black uppercase tracking-widest text-cyan-400">
-                      Regra Genérica
-                    </span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[8px] font-black uppercase tracking-widest text-cyan-400">
+                        Regra Genérica
+                      </span>
+                      {cardMethod && specificCount > 0 && (
+                        <span className="text-[8px] font-black uppercase tracking-widest text-amber-400">
+                          {specificCount} específica{specificCount > 1 ? 's' : ''} ativa{specificCount > 1 ? 's' : ''}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </td>
 
-                <td className="px-3 py-4 text-center">
+                <td className="px-3 py-3 text-center">
                   <input
                     type="number"
                     value={rule.settlement_days}
                     onChange={(e) =>
                       handleUpdateRule(rule.id, 'settlement_days', parseInt(e.target.value, 10) || 0)
                     }
-                    className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
+                    className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
                   />
                 </td>
 
-                <td className="px-3 py-4 text-center">
+                <td className="px-3 py-3 text-center">
                   <div className="flex flex-col items-center gap-1">
                     <button
                       onClick={() =>
@@ -383,18 +481,18 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
                   </div>
                 </td>
 
-                <td className="px-3 py-4 text-center">
+                <td className="px-3 py-3 text-center">
                   <select
                     value={rule.default_status}
                     onChange={(e) => handleUpdateRule(rule.id, 'default_status', e.target.value)}
-                    className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-[9px] font-black text-slate-300 outline-none focus:border-rose-500 transition-all uppercase tracking-wider w-[132px]"
+                    className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-[9px] font-black text-slate-300 outline-none focus:border-rose-500 transition-all uppercase tracking-wider w-[132px]"
                   >
                     <option value="LIQUIDADO">LIQUIDADO</option>
                     <option value="PROVISIONADO">PROVISIONADO</option>
                   </select>
                 </td>
 
-                <td className="px-3 py-4 text-center">
+                <td className="px-3 py-3 text-center">
                   <input
                     type="number"
                     step="0.01"
@@ -402,11 +500,11 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
                     onChange={(e) =>
                       handleUpdateRule(rule.id, 'fee_percent', parseFloat(e.target.value) || 0)
                     }
-                    className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
+                    className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
                   />
                 </td>
 
-                <td className="px-3 py-4 text-center">
+                <td className="px-3 py-3 text-center">
                   <input
                     type="number"
                     step="0.01"
@@ -414,25 +512,25 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
                     onChange={(e) =>
                       handleUpdateRule(rule.id, 'fee_fixed', parseFloat(e.target.value) || 0)
                     }
-                    className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
+                    className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
                   />
                 </td>
 
-                <td className="px-4 py-4">
+                <td className="px-4 py-3">
                   <input
                     type="text"
                     value={rule.notes || ''}
                     onChange={(e) => handleUpdateRule(rule.id, 'notes', e.target.value)}
                     placeholder="Notas..."
-                    className="w-full min-w-[150px] bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[11px] font-medium text-slate-400 outline-none focus:border-rose-500 transition-all"
+                    className="w-full min-w-[150px] bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-[11px] font-medium text-slate-400 outline-none focus:border-rose-500 transition-all"
                   />
                 </td>
 
-                <td className="px-4 py-4 text-center">
+                <td className="px-4 py-3 text-center">
                   {cardMethod ? (
                     <button
                       onClick={() => handleAddSpecificRule(rule)}
-                      className="px-2.5 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest bg-slate-800 hover:bg-slate-700 text-cyan-400 transition-all whitespace-nowrap"
+                      className="px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest bg-slate-800 hover:bg-slate-700 text-cyan-400 transition-all whitespace-nowrap"
                     >
                       + Regra específica
                     </button>
@@ -453,12 +551,12 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
   const renderCardsTable = () => (
     <div className="space-y-4">
       <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 px-4 py-3 text-sm text-cyan-200">
-        Aqui ficam apenas as regras específicas de cartões. Preencha pelo menos <strong>bandeira</strong> ou <strong>operadora</strong>.
+        Aqui ficam apenas as regras específicas de cartões. Preencha pelo menos <strong>bandeira</strong> ou <strong>operadora</strong>. Quando existir regra específica, ela tem prioridade sobre a genérica. A genérica entra só como fallback.
       </div>
 
       <ScrollTableShell minWidth="1180px">
         <table className="w-full text-left border-collapse">
-          <thead className="sticky top-0 z-20">
+          <thead className="sticky top-0 z-20 bg-slate-950">
             <tr className="bg-slate-950 text-slate-500 text-[8px] uppercase tracking-[0.18em] font-black border-b border-slate-800">
               <th className="px-6 py-4">Meio de Pagamento</th>
               <th className="px-3 py-4 text-center">Bandeira</th>
@@ -482,7 +580,7 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
             ) : (
               cardSpecificRules.map((rule) => (
                 <tr key={rule.id} className="hover:bg-slate-800/20 transition-colors">
-                  <td className="px-6 py-4">
+                  <td className="px-6 py-3">
                     <div className="flex flex-col gap-0.5 leading-tight">
                       <span className="text-[11px] font-black text-slate-200 uppercase tracking-tight">
                         {rule.payment_methods?.name || 'Desconhecido'}
@@ -493,38 +591,38 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
                     </div>
                   </td>
 
-                  <td className="px-3 py-4 text-center">
+                  <td className="px-3 py-3 text-center">
                     <input
                       type="text"
                       value={rule.card_brand || ''}
                       onChange={(e) => handleUpdateRule(rule.id, 'card_brand', e.target.value)}
                       placeholder="VISA"
-                      className="w-24 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center uppercase"
+                      className="w-24 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center uppercase"
                     />
                   </td>
 
-                  <td className="px-3 py-4 text-center">
+                  <td className="px-3 py-3 text-center">
                     <input
                       type="text"
                       value={rule.acquirer_name || ''}
                       onChange={(e) => handleUpdateRule(rule.id, 'acquirer_name', e.target.value)}
                       placeholder="STONE"
-                      className="w-28 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center uppercase"
+                      className="w-28 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center uppercase"
                     />
                   </td>
 
-                  <td className="px-3 py-4 text-center">
+                  <td className="px-3 py-3 text-center">
                     <input
                       type="number"
                       value={rule.settlement_days}
                       onChange={(e) =>
                         handleUpdateRule(rule.id, 'settlement_days', parseInt(e.target.value, 10) || 0)
                       }
-                      className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
+                      className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
                     />
                   </td>
 
-                  <td className="px-3 py-4 text-center">
+                  <td className="px-3 py-3 text-center">
                     <div className="flex flex-col items-center gap-1">
                       <button
                         onClick={() =>
@@ -548,18 +646,18 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
                     </div>
                   </td>
 
-                  <td className="px-3 py-4 text-center">
+                  <td className="px-3 py-3 text-center">
                     <select
                       value={rule.default_status}
                       onChange={(e) => handleUpdateRule(rule.id, 'default_status', e.target.value)}
-                      className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-[9px] font-black text-slate-300 outline-none focus:border-rose-500 transition-all uppercase tracking-wider w-[132px]"
+                      className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-[9px] font-black text-slate-300 outline-none focus:border-rose-500 transition-all uppercase tracking-wider w-[132px]"
                     >
                       <option value="LIQUIDADO">LIQUIDADO</option>
                       <option value="PROVISIONADO">PROVISIONADO</option>
                     </select>
                   </td>
 
-                  <td className="px-3 py-4 text-center">
+                  <td className="px-3 py-3 text-center">
                     <input
                       type="number"
                       step="0.01"
@@ -567,11 +665,11 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
                       onChange={(e) =>
                         handleUpdateRule(rule.id, 'fee_percent', parseFloat(e.target.value) || 0)
                       }
-                      className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
+                      className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
                     />
                   </td>
 
-                  <td className="px-3 py-4 text-center">
+                  <td className="px-3 py-3 text-center">
                     <input
                       type="number"
                       step="0.01"
@@ -579,33 +677,28 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
                       onChange={(e) =>
                         handleUpdateRule(rule.id, 'fee_fixed', parseFloat(e.target.value) || 0)
                       }
-                      className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
+                      className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
                     />
                   </td>
 
-                  <td className="px-4 py-4">
+                  <td className="px-4 py-3">
                     <input
                       type="text"
                       value={rule.notes || ''}
                       onChange={(e) => handleUpdateRule(rule.id, 'notes', e.target.value)}
                       placeholder="Notas..."
-                      className="w-full min-w-[150px] bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[11px] font-medium text-slate-400 outline-none focus:border-rose-500 transition-all"
+                      className="w-full min-w-[150px] bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-[11px] font-medium text-slate-400 outline-none focus:border-rose-500 transition-all"
                     />
                   </td>
 
-                  <td className="px-4 py-4 text-center">
-                    {rule.isNew ? (
-                      <button
-                        onClick={() => handleRemoveUnsavedRule(rule.id)}
-                        className="px-2.5 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest bg-slate-950 hover:bg-slate-900 text-rose-400 transition-all whitespace-nowrap border border-slate-800"
-                      >
-                        Remover
-                      </button>
-                    ) : (
-                      <span className="text-[9px] font-black uppercase tracking-widest text-slate-600">
-                        Salva
-                      </span>
-                    )}
+                  <td className="px-4 py-3 text-center">
+                    <button
+                      onClick={() => handleDeleteRule(rule)}
+                      disabled={saving}
+                      className="px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest bg-slate-950 hover:bg-slate-900 text-rose-400 transition-all whitespace-nowrap border border-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {rule.isNew ? 'Remover' : 'Excluir'}
+                    </button>
                   </td>
                 </tr>
               ))
