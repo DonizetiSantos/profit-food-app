@@ -45,18 +45,14 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
           .eq('company_id', activeCompany.id)
           .eq('is_active', true);
 
-        if (rulesError) {
-          throw rulesError;
-        }
+        if (rulesError) throw rulesError;
 
         const { data: methodsData, error: methodsError } = await supabase
           .from('payment_methods')
           .select('id, name')
           .eq('company_id', activeCompany.id);
 
-        if (methodsError) {
-          throw methodsError;
-        }
+        if (methodsError) throw methodsError;
 
         const existingRules: RuleRow[] = ((rulesData as RuleRow[]) || []).map((rule) => ({
           ...rule,
@@ -116,6 +112,8 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
     setSuccess(false);
 
     try {
+      const now = new Date().toISOString();
+
       const { data: existingRows, error: existingRowsError } = await supabase
         .from('payment_settlement_rules')
         .select('id, payment_method_id')
@@ -141,7 +139,8 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
           fee_percent: Number(rule.fee_percent) || 0,
           fee_fixed: Number(rule.fee_fixed) || 0,
           notes: rule.notes || '',
-          is_active: rule.is_active ?? true
+          is_active: rule.is_active ?? true,
+          created_at: now
         }));
 
       const rulesToUpdate = rules
