@@ -178,114 +178,113 @@ export const BankOpeningBalances: React.FC<BankOpeningBalancesProps> = ({
   }, [rows]);
 
   return (
-    <section className="rounded-3xl border border-slate-800 bg-slate-950/70 p-6 shadow-[0_0_40px_rgba(15,23,42,0.35)]">
-      <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <div>
-          <h2 className="text-2xl font-black uppercase tracking-tight text-white">
-            Saldos Iniciais dos Bancos
-          </h2>
-          <p className="mt-1 text-sm text-slate-400">
-            Defina o saldo de partida de cada banco sem afetar DRE, receitas, despesas ou fluxo
-            operacional do período.
-          </p>
-        </div>
-
-        <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-right">
-          <p className="text-[10px] font-black uppercase tracking-[0.25em] text-emerald-400">
-            Total Inicial
-          </p>
-          <p className="mt-1 text-xl font-black text-white">
-            {formatCurrencyBRL(totalOpeningBalance)}
-          </p>
-        </div>
-      </div>
-
-      {message && (
-        <div
-          className={`mb-6 rounded-2xl border px-4 py-3 text-sm font-semibold ${
-            messageType === 'success'
-              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-              : 'border-rose-500/30 bg-rose-500/10 text-rose-300'
-          }`}
-        >
-          {message}
-        </div>
-      )}
-
-      {loading ? (
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 px-4 py-10 text-center text-sm font-semibold text-slate-400">
-          Carregando saldos iniciais...
-        </div>
-      ) : (
-        <>
-          <div className="overflow-x-auto rounded-3xl border border-slate-800">
-            <table className="min-w-full">
-              <thead className="bg-slate-950/80">
-                <tr className="text-left">
-                  <th className="px-5 py-4 text-[10px] font-black uppercase tracking-[0.25em] text-slate-500">
-                    Banco
-                  </th>
-                  <th className="px-5 py-4 text-[10px] font-black uppercase tracking-[0.25em] text-slate-500">
-                    Saldo Inicial (R$)
-                  </th>
-                  <th className="px-5 py-4 text-[10px] font-black uppercase tracking-[0.25em] text-slate-500">
-                    Data de Referência
-                  </th>
-                </tr>
-              </thead>
-
-              <tbody className="divide-y divide-slate-800 bg-slate-900/60">
-                {rows.map((row) => (
-                  <tr key={row.bankId} className="hover:bg-slate-900/90">
-                    <td className="px-5 py-4">
-                      <div className="font-black uppercase text-white">{row.bankName}</div>
-                    </td>
-
-                    <td className="px-5 py-4">
-                      <input
-                        type="text"
-                        value={row.openingBalance}
-                        onChange={(e) =>
-                          handleRowChange(row.bankId, 'openingBalance', e.target.value)
-                        }
-                        placeholder="0.00"
-                        className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 font-bold text-white outline-none transition focus:border-emerald-500"
-                      />
-                    </td>
-
-                    <td className="px-5 py-4">
-                      <input
-                        type="date"
-                        value={row.referenceDate}
-                        onChange={(e) =>
-                          handleRowChange(row.bankId, 'referenceDate', e.target.value)
-                        }
-                        className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 font-bold text-white outline-none transition focus:border-emerald-500"
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+    <section className="space-y-4">
+      <div className="rounded-[2rem] border border-slate-800 bg-slate-950/70 p-5 shadow-[0_0_40px_rgba(15,23,42,0.35)]">
+        <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h2 className="text-2xl font-black uppercase tracking-tight text-white">
+              Saldos Iniciais dos Bancos
+            </h2>
+            <p className="mt-1 text-sm text-slate-400">
+              Defina o saldo de partida de cada banco sem afetar DRE, receitas, despesas ou fluxo operacional do período.
+            </p>
           </div>
 
-          <div className="mt-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div className="max-w-3xl rounded-2xl border border-blue-500/20 bg-blue-500/5 px-4 py-3 text-sm text-blue-200">
-              Este cadastro serve apenas para iniciar a operação com os saldos corretos nos bancos.
-              Ele não deve ser tratado como receita, despesa ou lançamento operacional.
+          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-right">
+            <p className="text-[10px] font-black uppercase tracking-[0.25em] text-emerald-400">
+              Total Inicial
+            </p>
+            <p className="mt-1 text-xl font-black text-white">
+              {formatCurrencyBRL(totalOpeningBalance)}
+            </p>
+          </div>
+        </div>
+
+        {message && (
+          <div
+            className={`mb-4 rounded-2xl border px-4 py-3 text-sm font-semibold ${
+              messageType === 'success'
+                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                : 'border-rose-500/30 bg-rose-500/10 text-rose-300'
+            }`}
+          >
+            {message}
+          </div>
+        )}
+
+        {loading ? (
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/60 px-4 py-10 text-center text-sm font-semibold text-slate-400">
+            Carregando saldos iniciais...
+          </div>
+        ) : (
+          <>
+            <div className="rounded-[2rem] border border-slate-800 overflow-hidden shadow-2xl">
+              <div className="overflow-auto custom-scrollbar max-h-[68vh]">
+                <table className="w-full min-w-[920px] text-left border-collapse">
+                  <thead className="sticky top-0 z-20">
+                    <tr className="bg-slate-950 text-slate-500 text-[8px] uppercase tracking-[0.18em] font-black border-b border-slate-800">
+                      <th className="px-5 py-3">Banco</th>
+                      <th className="px-5 py-3">Saldo Inicial (R$)</th>
+                      <th className="px-5 py-3">Data de Referência</th>
+                    </tr>
+                  </thead>
+
+                  <tbody className="divide-y divide-slate-800 bg-slate-900/60">
+                    {rows.map((row) => (
+                      <tr key={row.bankId} className="hover:bg-slate-900/90 transition-colors">
+                        <td className="px-5 py-3 align-middle">
+                          <div className="font-black uppercase text-white text-[11px]">
+                            {row.bankName}
+                          </div>
+                        </td>
+
+                        <td className="px-5 py-3 align-middle">
+                          <input
+                            type="text"
+                            value={row.openingBalance}
+                            onChange={(e) =>
+                              handleRowChange(row.bankId, 'openingBalance', e.target.value)
+                            }
+                            placeholder="0.00"
+                            className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-[11px] font-bold text-white outline-none transition focus:border-emerald-500"
+                          />
+                        </td>
+
+                        <td className="px-5 py-3 align-middle">
+                          <input
+                            type="date"
+                            value={row.referenceDate}
+                            onChange={(e) =>
+                              handleRowChange(row.bankId, 'referenceDate', e.target.value)
+                            }
+                            className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-[11px] font-bold text-white outline-none transition focus:border-emerald-500"
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
 
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={saving}
-              className="inline-flex items-center justify-center rounded-2xl bg-rose-600 px-6 py-4 text-sm font-black uppercase tracking-[0.2em] text-white transition hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {saving ? 'Salvando...' : 'Salvar Saldos Iniciais'}
-            </button>
-          </div>
-        </>
-      )}
+            <div className="mt-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div className="max-w-3xl rounded-2xl border border-blue-500/20 bg-blue-500/5 px-4 py-3 text-sm text-blue-200">
+                Este cadastro serve apenas para iniciar a operação com os saldos corretos nos bancos.
+                Ele não deve ser tratado como receita, despesa ou lançamento operacional.
+              </div>
+
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saving}
+                className="inline-flex items-center justify-center rounded-2xl bg-rose-600 px-6 py-3 text-sm font-black uppercase tracking-[0.2em] text-white transition hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {saving ? 'Salvando...' : 'Salvar Saldos Iniciais'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </section>
   );
 };
