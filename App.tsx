@@ -23,11 +23,12 @@ const WHATSAPP_LINK = "https://wa.me/5511999999999"; // Configurar link aqui
 const CORE_PAYMENT_METHODS = [
   'DINHEIRO',
   'PIX',
+  'PIX ONLINE',
+  'DEPÓSITO',
   'BOLETO',
   'CARTÃO CRÉDITO',
   'CARTÃO DÉBITO',
-  'VOUCHER',
-  'APLICATIVO',
+  'APLICATIVO DELIVERY',
   'OUTROS',
 ];
 
@@ -145,23 +146,20 @@ const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void
       (method) => normalizeMethodName(method) === normalizedRequested
     );
 
-    if (!canonicalMethod) {
-      alert('Cadastre aqui apenas os meios base: Dinheiro, Pix, Boleto, Cartão Crédito, Cartão Débito, Voucher, Aplicativo ou Outros.');
-      return;
-    }
+    const finalMethodName = canonicalMethod ?? normalizedRequested;
 
     const alreadyExists = paymentMethods.some(
       (method) => normalizeMethodName(method.name) === normalizedRequested
     );
 
     if (alreadyExists) {
-      alert('Esse canal base já está cadastrado.');
+      alert(canonicalMethod ? 'Esse meio estrutural já está cadastrado.' : 'Esse meio complementar já está cadastrado.');
       return;
     }
 
     setSyncing(true);
     try {
-      const newMethod = { id: crypto.randomUUID(), name: canonicalMethod };
+      const newMethod = { id: crypto.randomUUID(), name: finalMethodName };
       await datastore.upsertOne('payment_methods', newMethod, activeCompany.id);
       setPaymentMethods(prev => [...prev, newMethod].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))); 
     } catch (err) {

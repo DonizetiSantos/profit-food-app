@@ -14,6 +14,15 @@ export interface SettlementResult {
   ruleFound: boolean;
 }
 
+const normalizeText = (value: string | null | undefined) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+const includesAny = (text: string, terms: string[]) => terms.some((term) => text.includes(term));
+
 export const settlementService = {
   async resolvePaymentSettlement(
     companyId: string,
@@ -103,25 +112,22 @@ export const settlementService = {
     ];
 
     try {
-      // Try to find any of these accounts in the company
       const { data: existing, error } = await supabase
         .from('accounts')
         .select('id, name')
         .eq('company_id', companyId)
         .eq('group_id', MainGroup.DESPESAS)
-        .in('name', candidateNames.map(n => n.toUpperCase()));
+        .in('name', candidateNames.map((n) => n.toUpperCase()));
 
       if (error) throw error;
 
       if (existing && existing.length > 0) {
-        // Return the first match found based on our priority list
         for (const name of candidateNames) {
-          const match = existing.find(e => e.name === name.toUpperCase());
+          const match = existing.find((e) => e.name === name.toUpperCase());
           if (match) return match.id;
         }
       }
 
-      // If not found, try to resolve/create 'TAXAS CARTÕES' as a safe fallback
       const fallbackId = await accountService.resolveAccountByName(
         companyId,
         'TAXAS CARTÕES',
@@ -153,25 +159,44 @@ export const settlementService = {
 
   async resolveReceiptAccountByPaymentMethod(companyId: string, paymentMethodId: string): Promise<string | null> {
     try {
-      // 1. Get payment method to know its name/type
-      const { data: method } = await supabase
+      const { data: method, error } = await supabase
         .from('payment_methods')
         .select('name')
         .eq('id', paymentMethodId)
         .maybeSingle();
 
-      const methodName = method?.name?.toLowerCase() || '';
+      if (error) throw error;
+
+      const methodName = normalizeText(method?.name);
+      if (!methodName) return null;
+
       let targetAccountName = '';
 
-      if (methodName.includes('crédito') || methodName.includes('credito')) {
+      if (includesAny(methodName, ['credito', 'cartao credito'])) {
         targetAccountName = 'RECEBIMENTO CARTÃO CRÉDITO';
-      } else if (methodName.includes('débito') || methodName.includes('debito')) {
+      } else if (includesAny(methodName, ['debito', 'cartao debito'])) {
         targetAccountName = 'RECEBIMENTO CARTÃO DÉBITO';
-      } else if (methodName.includes('voucher') || methodName.includes('vale')) {
+      } else if (includesAny(methodName, ['voucher', 'vale'])) {
         targetAccountName = 'RECEBIMENTO VOUCHER';
+      } else if (includesAny(methodName, ['ifood', 'aplicativo', 'delivery app', 'app'])) {
+        targetAccountName = 'RECEBIMENTO APLICATIVO';
+      } else if (includesAny(methodName, ['pago online', 'online', 'pix online', 'gateway'])) {
+        targetAccountName = 'RECEBIMENTO PAGO ONLINE';
+      } else if (includesAny(methodName, ['deposito', 'transferencia', 'transferência', 'debito em conta'])) {
+        targetAccountName = 'RECEBIMENTO DEPÓSITO / TRANSFERÊNCIA';
+      } else if (includesAny(methodName, ['pix'])) {
+        targetAccountName = 'RECEBIMENTO PIX';
+      } else if (includesAny(methodName, ['boleto'])) {
+        targetAccountName = 'RECEBIMENTO BOLETO';
+      } else if (includesAny(methodName, ['dinheiro'])) {
+        targetAccountName = 'CAIXA EMPRESA';
+      } else if (includesAny(methodName, ['outros'])) {
+        targetAccountName = 'RECEBIMENTOS DIVERSOS';
       }
 
-      if (!targetAccountName) return null;
+      if (!targetAccountName) {
+        targetAccountName = 'RECEBIMENTOS DIVERSOS';
+      }
 
       const id = await accountService.resolveAccountByName(
         companyId,
@@ -179,6 +204,7 @@ export const settlementService = {
         MainGroup.RECEITAS,
         { createIfMissing: true, defaultSubgroupId: 's-entradas-op' }
       );
+
       return id;
     } catch (err) {
       console.error('[SettlementService] Error resolving receipt account:', err);

@@ -79,9 +79,29 @@ const resolveBestRule = (
 
 const applyRuleToRow = (
   row: NormalizedPdvClosing,
-  rule: PaymentSettlementRule | null
+  rule: PaymentSettlementRule | null,
+  caixaEmpresaId?: string
 ): NormalizedPdvClosing => {
   const grossAmount = Number(row.grossAmount ?? row.amount ?? 0);
+  const isCash = row.paymentMethodType === 'DINHEIRO';
+
+  if (isCash) {
+    const currentFeeAmount = Number(row.feeAmount ?? 0);
+
+    return {
+      ...row,
+      grossAmount,
+      feePercent: 0,
+      feeFixed: 0,
+      feeAmount: currentFeeAmount,
+      netAmount: Number((grossAmount - currentFeeAmount).toFixed(2)),
+      mappedStatus: 'LIQUIDADO',
+      defaultBankId: caixaEmpresaId || row.defaultBankId || null,
+      dueDate: row.closingDate,
+      liquidationDate: row.closingDate,
+      shouldGenerateFeePosting: currentFeeAmount > 0
+    };
+  }
 
   if (!rule) {
     const currentFeeAmount = Number(row.feeAmount ?? 0);
@@ -149,11 +169,16 @@ const applyRuleToRow = (
 
 const recalculateRowsFromFinalMapping = (
   rows: NormalizedPdvClosing[],
-  settlementRules: PaymentSettlementRule[]
+  settlementRules: PaymentSettlementRule[],
+  caixaEmpresaId?: string
 ): NormalizedPdvClosing[] => {
   const { byPaymentMethodId, byMethodName } = buildRuleMaps(settlementRules);
 
   return rows.map((row) => {
+    if (row.paymentMethodType === 'DINHEIRO') {
+      return applyRuleToRow(row, null, caixaEmpresaId);
+    }
+
     let matchedRule: PaymentSettlementRule | null = null;
 
     if (row.paymentMethodId && byPaymentMethodId.has(row.paymentMethodId)) {
@@ -173,7 +198,7 @@ const recalculateRowsFromFinalMapping = (
       }
     }
 
-    return applyRuleToRow(row, matchedRule);
+    return applyRuleToRow(row, matchedRule, caixaEmpresaId);
   });
 };
 
@@ -297,7 +322,7 @@ export const pdvImportService = {
 
     const settlementRules = (rules || []) as PaymentSettlementRule[];
 
-    batch.rows = recalculateRowsFromFinalMapping(batch.rows, settlementRules);
+    batch.rows = recalculateRowsFromFinalMapping(batch.rows, settlementRules, caixaEmpresaId);
     batch = recalculateBatchTotals(batch);
 
     const importId = crypto.randomUUID();
@@ -326,21 +351,38 @@ export const pdvImportService = {
       const postingId = crypto.randomUUID();
 
       let bankId = row.defaultBankId;
-      if (!bankId && row.mappedStatus === 'LIQUIDADO') {
+      if (row.paymentMethodType === 'DINHEIRO') {
+        bankId = caixaEmpresaId || row.defaultBankId || null;
+      } else if (!bankId && row.mappedStatus === 'LIQUIDADO') {
         if (row.paymentMethodType === 'DINHEIRO') {
           bankId = caixaEmpresaId;
         }
       }
 
+      const finalStatus =
+        row.paymentMethodType === 'DINHEIRO'
+          ? 'LIQUIDADO'
+          : (row.mappedStatus || 'PROVISIONADO');
+
+      const finalDueDate =
+        row.paymentMethodType === 'DINHEIRO'
+          ? row.closingDate
+          : (row.dueDate || row.closingDate);
+
+      const finalLiquidationDate =
+        row.paymentMethodType === 'DINHEIRO'
+          ? row.closingDate
+          : row.liquidationDate;
+
       if (row.shouldGenerateRevenuePosting) {
         postings.push({
           id: postingId,
           company_id: companyId,
-          status: row.mappedStatus || 'PROVISIONADO',
+          status: finalStatus,
           competence_date: row.closingDate,
           occurrence_date: row.closingDate,
-          due_date: row.dueDate || row.closingDate,
-          liquidation_date: row.liquidationDate,
+          due_date: finalDueDate,
+          liquidation_date: finalLiquidationDate,
           group: 'RECEITAS',
           account_id: accountId,
           observations: `Venda PDV (${source}) - ${row.rawLabel}`,
@@ -354,11 +396,11 @@ export const pdvImportService = {
         postings.push({
           id: crypto.randomUUID(),
           company_id: companyId,
-          status: row.mappedStatus || 'PROVISIONADO',
+          status: finalStatus,
           competence_date: row.closingDate,
           occurrence_date: row.closingDate,
-          due_date: row.dueDate || row.closingDate,
-          liquidation_date: row.liquidationDate,
+          due_date: finalDueDate,
+          liquidation_date: finalLiquidationDate,
           group: 'DESPESAS',
           account_id: feeAccountId,
           observations: `Taxa PDV (${source}) - ${row.rawLabel}`,
@@ -383,8 +425,8 @@ export const pdvImportService = {
           source: source.toUpperCase(),
           raw_label: row.rawLabel,
           payment_method_id: row.paymentMethodId,
-          default_status: row.mappedStatus || 'PROVISIONADO',
-          default_bank_id: row.defaultBankId || null
+          default_status: row.paymentMethodType === 'DINHEIRO' ? 'LIQUIDADO' : (row.mappedStatus || 'PROVISIONADO'),
+          default_bank_id: row.paymentMethodType === 'DINHEIRO' ? (caixaEmpresaId || row.defaultBankId || null) : (row.defaultBankId || null)
         });
         seenLabels.add(row.rawLabel);
       }

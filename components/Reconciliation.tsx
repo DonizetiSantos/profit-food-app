@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Bank, User } from '../types';
 import { ofxImportService } from '../services/ofxImportService';
 import { settlementService } from '../services/settlementService';
@@ -35,6 +35,8 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
   const [manualMaxAmount, setManualMaxAmount] = useState('');
   const [manualCandidates, setManualCandidates] = useState<any[]>([]);
   const [loadingManual, setLoadingManual] = useState(false);
+
+  const sortedBanks = useMemo(() => [...banks].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')), [banks]);
 
   const loadTransactions = async () => {
     if (!selectedBankId || !activeCompany) {
@@ -412,7 +414,7 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
               className="bg-slate-950 border border-slate-800 rounded-xl px-4 py-2 text-xs font-bold text-slate-300 outline-none focus:border-rose-500 transition-all min-w-[200px]"
             >
               <option value="">Selecionar Banco...</option>
-              {banks.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+              {sortedBanks.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
           </div>
 

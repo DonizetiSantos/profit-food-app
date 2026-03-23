@@ -79,7 +79,27 @@ export const FinancialPostings: React.FC<Props> = ({
     setAmount('');
   };
 
-  const filteredAccounts = useMemo(() => accounts.filter(acc => acc.groupId === selectedGroup), [accounts, selectedGroup]);
+  const filteredAccounts = useMemo(
+    () => [...accounts]
+      .filter(acc => acc.groupId === selectedGroup)
+      .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')),
+    [accounts, selectedGroup]
+  );
+
+  const sortedPaymentMethods = useMemo(
+    () => [...paymentMethods].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')),
+    [paymentMethods]
+  );
+
+  const sortedEntities = useMemo(
+    () => [...entities].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')),
+    [entities]
+  );
+
+  const sortedBanks = useMemo(
+    () => [...banks].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')),
+    [banks]
+  );
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -262,14 +282,14 @@ export const FinancialPostings: React.FC<Props> = ({
                 <label className="text-xs font-bold text-slate-400 ml-1">Operação {(activeTab === 'PROVISIONADO' || selectedGroup === MainGroup.ESTOQUE) && '(Opcional)'}</label>
                 <select value={selectedMethod} onChange={e => setSelectedMethod(e.target.value)} className="form-input-dark">
                   <option value="">Selecione...</option>
-                  {paymentMethods.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  {sortedPaymentMethods.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
                 </select>
               </div>
               <div className="flex flex-col gap-2">
                 <label className="text-xs font-bold text-slate-400 ml-1">Entidade {(activeTab === 'PROVISIONADO' || selectedGroup === MainGroup.ESTOQUE) && '(Opcional)'}</label>
                 <select value={selectedEntity} onChange={e => setSelectedEntity(e.target.value)} className="form-input-dark">
                   <option value="">Selecione...</option>
-                  {entities.map(ent => <option key={ent.id} value={ent.id}>{ent.name}</option>)}
+                  {sortedEntities.map(ent => <option key={ent.id} value={ent.id}>{ent.name}</option>)}
                 </select>
               </div>
               <div className="flex flex-col gap-2">
@@ -295,7 +315,7 @@ export const FinancialPostings: React.FC<Props> = ({
                   <label className="text-xs font-bold text-slate-400 ml-1">Conta Bancária {selectedGroup === MainGroup.ESTOQUE && '(Opcional)'}</label>
                   <select value={selectedBank} onChange={e => setSelectedBank(e.target.value)} className="form-input-dark border-rose-500/20">
                     <option value="">Selecione o banco...</option>
-                    {banks.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                    {sortedBanks.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
                   </select>
                 </div>
               </div>

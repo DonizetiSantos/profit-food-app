@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React from 'react';
 import { MainGroup, Subgroup, Account } from '../types';
 
 interface Props {
@@ -11,8 +11,13 @@ interface Props {
 
 export const AccountRegistration: React.FC<Props> = ({ subgroups, accounts, onAddAccount, onDeleteAccount }) => {
   const renderGroup = (group: MainGroup, colorClass: string, accentColor: string) => {
-    const groupSubgroups = subgroups.filter(s => s.groupId === group);
-    const groupAccounts = accounts.filter(a => a.groupId === group);
+    const groupSubgroups = [...subgroups]
+      .filter(s => s.groupId === group)
+      .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+
+    const groupAccounts = [...accounts]
+      .filter(a => a.groupId === group)
+      .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
 
     return (
       <div className="bg-slate-900 rounded-[2rem] shadow-2xl border border-slate-800 overflow-hidden flex flex-col h-full">
@@ -36,7 +41,7 @@ export const AccountRegistration: React.FC<Props> = ({ subgroups, accounts, onAd
               <div key={sub.id} className="border-l-2 border-slate-800 pl-6 py-2">
                 <h4 className="text-[10px] font-black text-slate-500 mb-4 uppercase tracking-[0.2em]">{sub.name}</h4>
                 <div className="space-y-2 mb-6">
-                  {groupAccounts.filter(a => a.subgroupId === sub.id).map(acc => (
+                  {groupAccounts.filter(a => a.subgroupId === sub.id).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')).map(acc => (
                     <div key={acc.id} className="flex justify-between items-center p-3 bg-slate-900 hover:bg-slate-800/50 rounded-xl border border-transparent hover:border-slate-700 transition-all group">
                       <span className="text-sm font-bold text-slate-400 group-hover:text-slate-200">{acc.name}</span>
                       {!acc.isFixed && (

@@ -215,7 +215,13 @@ export function normalizePdvClosingRow(
   let dueDate: string | null = null;
   let liquidationDate: string | null = null;
 
-  if (receivesSameDay === true) {
+  // REGRA ESTRUTURAL DO PROFIT FOOD:
+  // dinheiro entra sempre liquidado no dia do fechamento
+  if (paymentMethodType === 'DINHEIRO') {
+    mappedStatus = 'LIQUIDADO';
+    dueDate = closingDate;
+    liquidationDate = closingDate;
+  } else if (receivesSameDay === true) {
     mappedStatus = 'LIQUIDADO';
     dueDate = closingDate;
     liquidationDate = closingDate;

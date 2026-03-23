@@ -20,11 +20,12 @@ interface Props {
 const CORE_PAYMENT_METHODS = [
   'DINHEIRO',
   'PIX',
+  'PIX ONLINE',
+  'DEPÓSITO',
   'BOLETO',
   'CARTÃO CRÉDITO',
   'CARTÃO DÉBITO',
-  'VOUCHER',
-  'APLICATIVO',
+  'APLICATIVO DELIVERY',
   'OUTROS',
 ] as const;
 
@@ -52,12 +53,26 @@ export const GeneralRegistry: React.FC<Props> = ({
 }) => {
   const [inputBank, setInputBank] = useState('');
   const [inputFavored, setInputFavored] = useState('');
+  const [inputMethod, setInputMethod] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const coreMethodSet = useMemo(
     () => new Set(CORE_PAYMENT_METHODS.map((method) => normalizeText(method))),
     []
   );
+
+  const normalizedExistingMethods = useMemo(
+    () => new Set(paymentMethods.map((method) => normalizeText(method.name))),
+    [paymentMethods]
+  );
+
+  const sortedBanks = useMemo(() => {
+    return [...banks].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+  }, [banks]);
+
+  const sortedFavored = useMemo(() => {
+    return [...favored].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+  }, [favored]);
 
   const coreMethods = useMemo(() => {
     return paymentMethods
@@ -73,8 +88,24 @@ export const GeneralRegistry: React.FC<Props> = ({
 
   const missingCoreMethods = useMemo(() => {
     const existing = new Set(coreMethods.map((method) => normalizeText(method.name)));
-    return CORE_PAYMENT_METHODS.filter((method) => !existing.has(normalizeText(method)));
+    return CORE_PAYMENT_METHODS
+      .filter((method) => !existing.has(normalizeText(method)))
+      .sort((a, b) => a.localeCompare(b, 'pt-BR'));
   }, [coreMethods]);
+
+  const handleAddCustomMethod = () => {
+    const normalized = normalizeText(inputMethod);
+
+    if (!normalized) return;
+
+    if (normalizedExistingMethods.has(normalized)) {
+      setInputMethod('');
+      return;
+    }
+
+    onAddMethod(normalized);
+    setInputMethod('');
+  };
 
   const renderSection = (
     title: string,
@@ -168,7 +199,7 @@ export const GeneralRegistry: React.FC<Props> = ({
         </div>
         <div>
           <h3 className="font-black text-slate-200 uppercase tracking-[0.2em] text-[10px]">Canais de Transação</h3>
-          <p className="text-[9px] font-bold text-slate-500 mt-1 uppercase tracking-wider">Cadastre aqui apenas os meios base do sistema.</p>
+          <p className="text-[9px] font-bold text-slate-500 mt-1 uppercase tracking-wider">Cadastre aqui os meios base e também meios complementares quando a operação exigir.</p>
         </div>
       </div>
 
@@ -176,17 +207,17 @@ export const GeneralRegistry: React.FC<Props> = ({
         <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 px-4 py-4 space-y-2">
           <p className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-300">Modelo correto do app</p>
           <p className="text-xs text-cyan-100 leading-relaxed">
-            Mantenha aqui somente <strong>Dinheiro, Pix, Boleto, Cartão Crédito, Cartão Débito, Voucher, Aplicativo e Outros</strong>.
-            Combinações como <strong>Visa + Stone</strong> ou <strong>Master + Rede</strong> devem ser criadas apenas em <strong>Configurações &gt; Regras de Cartões</strong>.
+            Mantenha aqui os meios estruturais como <strong>Dinheiro, Pix, Pix Online, Depósito, Boleto, Cartão Crédito, Cartão Débito, Aplicativo Delivery e Outros</strong>.
+            Combinações como <strong>Visa + Stone</strong> ou <strong>Master + Rede</strong> devem continuar em <strong>Configurações &gt; Regras de Cartões</strong>.
           </p>
         </div>
 
         <div>
-          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 mb-3">Adicionar meio base</p>
+          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 mb-3">Adicionar meio base estrutural</p>
           <div className="flex flex-wrap gap-2">
             {missingCoreMethods.length === 0 ? (
               <div className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-[10px] font-black uppercase tracking-widest text-emerald-400">
-                Todos os meios base já estão cadastrados
+                Todos os meios estruturais já estão cadastrados
               </div>
             ) : (
               missingCoreMethods.map((method) => (
@@ -203,13 +234,43 @@ export const GeneralRegistry: React.FC<Props> = ({
           </div>
         </div>
 
+        <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-4 space-y-3">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-300">Adicionar meio complementar manualmente</p>
+            <p className="text-xs text-amber-100/90 leading-relaxed mt-2">
+              Use isso quando a operação exigir um canal que faça sentido separar no seu controle, como <strong>Pago Online</strong>, <strong>Depósito Online</strong>, <strong>Débito em Conta</strong> ou outro meio específico.
+            </p>
+          </div>
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleAddCustomMethod();
+            }}
+            className="flex gap-2"
+          >
+            <input
+              value={inputMethod}
+              onChange={(e) => setInputMethod(e.target.value)}
+              placeholder="Ex.: PAGO ONLINE"
+              className="flex-1 text-[10px] p-3 bg-slate-950 border border-slate-800 rounded-xl focus:ring-1 focus:ring-amber-400 outline-none text-slate-100 placeholder:text-slate-700 font-bold uppercase"
+            />
+            <button
+              type="submit"
+              className="bg-slate-800 text-amber-400 px-4 py-2 rounded-xl hover:bg-amber-500 hover:text-slate-950 transition-all font-black text-xs"
+            >
+              +
+            </button>
+          </form>
+        </div>
+
         <div className="space-y-3 flex-1 overflow-y-auto pr-2 custom-scrollbar">
           <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 mb-3">Meios base cadastrados</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 mb-3">Meios estruturais cadastrados</p>
             <div className="space-y-2">
               {coreMethods.length === 0 ? (
                 <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                  Nenhum meio base cadastrado ainda.
+                  Nenhum meio estrutural cadastrado ainda.
                 </div>
               ) : (
                 coreMethods.map((item) => (
@@ -226,20 +287,23 @@ export const GeneralRegistry: React.FC<Props> = ({
           </div>
 
           <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-400 mb-3">Cadastros legados específicos</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-400 mb-3">Meios complementares cadastrados</p>
             <div className="space-y-2">
               {legacyMethods.length === 0 ? (
                 <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                  Nenhum cadastro legado fora do padrão.
+                  Nenhum meio complementar cadastrado.
                 </div>
               ) : (
                 legacyMethods.map((item) => (
                   <div key={item.id} className="flex justify-between items-center p-3 bg-slate-950 rounded-xl group border border-amber-500/20 hover:border-amber-500/40 transition-all">
                     <div className="flex flex-col">
                       <span className="text-[10px] text-slate-200 font-bold uppercase tracking-wider">{item.name}</span>
-                      <span className="text-[8px] text-amber-400 font-black tracking-[0.18em] uppercase">Legado específico indevido</span>
+                      <span className="text-[8px] text-amber-400 font-black tracking-[0.18em] uppercase">Complementar da operação</span>
                     </div>
-                    <button onClick={() => onDeleteMethod(item.id)} className="text-rose-500 hover:text-rose-400 transition-all shrink-0 text-[9px] font-black uppercase tracking-widest">
+                    <button
+                      onClick={() => onDeleteMethod(item.id)}
+                      className="text-rose-500 hover:text-rose-400 transition-all shrink-0 text-[9px] font-black uppercase tracking-widest"
+                    >
                       Excluir
                     </button>
                   </div>
@@ -261,7 +325,13 @@ export const GeneralRegistry: React.FC<Props> = ({
         </div>
 
         <div className="flex gap-3 bg-slate-900 p-2 rounded-2xl border border-slate-800 shadow-2xl">
-          <input type="file" accept=".json" className="hidden" ref={fileInputRef} onChange={(e) => e.target.files?.[0] && onImport(e.target.files[0])} />
+          <input
+            type="file"
+            accept=".json"
+            className="hidden"
+            ref={fileInputRef}
+            onChange={(e) => e.target.files?.[0] && onImport(e.target.files[0])}
+          />
           <button onClick={onReload} className="flex items-center gap-2 bg-rose-600 hover:bg-rose-500 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2v6h-6" /><path d="M3 12a9 9 0 0 1 15-6.7L21 8" /><path d="M3 22v-6h6" /><path d="M21 12a9 9 0 0 1-15 6.7L3 16" /></svg>
             Recarregar do Servidor
@@ -282,9 +352,27 @@ export const GeneralRegistry: React.FC<Props> = ({
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-        {renderSection('Bancos e Contas', 'Banco...', banks, onAddBank, onDeleteBank, inputBank, setInputBank, <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="12" x="2" y="6" rx="2" /><circle cx="12" cy="12" r="2" /><path d="M6 12h.01" /><path d="M18 12h.01" /></svg>)}
+        {renderSection(
+          'Bancos e Contas',
+          'Banco...',
+          banks,
+          onAddBank,
+          onDeleteBank,
+          inputBank,
+          setInputBank,
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="12" x="2" y="6" rx="2" /><circle cx="12" cy="12" r="2" /><path d="M6 12h.01" /><path d="M18 12h.01" /></svg>
+        )}
         {renderPaymentMethodsSection()}
-        {renderSection('Favorecidos / Clientes', 'Nome...', favored, onAddFavored, onDeleteFavored, inputFavored, setInputFavored, <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /></svg>)}
+        {renderSection(
+          'Favorecidos / Clientes',
+          'Nome...',
+          favored,
+          onAddFavored,
+          onDeleteFavored,
+          inputFavored,
+          setInputFavored,
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /></svg>
+        )}
       </div>
     </div>
   );

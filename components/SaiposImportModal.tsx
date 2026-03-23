@@ -11,6 +11,16 @@ interface Props {
   onSuccess: () => void;
 }
 
+const normalizeText = (value: string | null | undefined) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+const isCashItem = (item: SaiposImportPreviewItem) =>
+  normalizeText(item.paymentLabel).includes('dinheiro');
+
 export const SaiposImportModal: React.FC<Props> = ({ isOpen, onClose, banks, paymentMethods, onSuccess }) => {
   const { activeCompany } = useActiveCompany();
   const [file, setFile] = useState<File | null>(null);
@@ -22,6 +32,25 @@ export const SaiposImportModal: React.FC<Props> = ({ isOpen, onClose, banks, pay
   const [importing, setImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const sortedBanks = [...banks].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+  const sortedPaymentMethods = [...paymentMethods].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+
+  const caixaEmpresaId = banks.find((b) => b.name.toUpperCase().includes('CAIXA EMPRESA'))?.id;
+
+  const enforceStructuralRules = (items: SaiposImportPreviewItem[]): SaiposImportPreviewItem[] => {
+    return items.map((item) => {
+      if (isCashItem(item)) {
+        return {
+          ...item,
+          suggestedStatus: 'LIQUIDADO',
+          suggestedBankId: caixaEmpresaId || item.suggestedBankId
+        };
+      }
+
+      return item;
+    });
+  };
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (!selectedFile || !activeCompany) return;
@@ -29,8 +58,9 @@ export const SaiposImportModal: React.FC<Props> = ({ isOpen, onClose, banks, pay
     setLoading(true);
     try {
       const preview = await saiposImportService.preparePreview(selectedFile, activeCompany.id);
+
       setFile(selectedFile);
-      setPreviewItems(preview.items);
+      setPreviewItems(enforceStructuralRules(preview.items));
       setFileHash(preview.fileHash);
       setFromDate(preview.fromDate);
       setToDate(preview.toDate);
@@ -44,7 +74,19 @@ export const SaiposImportModal: React.FC<Props> = ({ isOpen, onClose, banks, pay
 
   const handleUpdateItem = (index: number, updates: Partial<SaiposImportPreviewItem>) => {
     const newItems = [...previewItems];
-    newItems[index] = { ...newItems[index], ...updates };
+    const currentItem = newItems[index];
+
+    if (isCashItem(currentItem)) {
+      newItems[index] = {
+        ...currentItem,
+        ...updates,
+        suggestedStatus: 'LIQUIDADO',
+        suggestedBankId: caixaEmpresaId || currentItem.suggestedBankId || updates.suggestedBankId
+      };
+    } else {
+      newItems[index] = { ...currentItem, ...updates };
+    }
+
     setPreviewItems(newItems);
   };
 
@@ -53,16 +95,14 @@ export const SaiposImportModal: React.FC<Props> = ({ isOpen, onClose, banks, pay
 
     setImporting(true);
     try {
-      const caixaEmpresa = banks.find(b => b.name.toUpperCase().includes('CAIXA EMPRESA'))?.id;
-      
       const result = await saiposImportService.executeImport(
         fileHash,
         file.name,
-        previewItems,
+        enforceStructuralRules(previewItems),
         activeCompany.id,
         fromDate,
         toDate,
-        caixaEmpresa
+        caixaEmpresaId
       );
 
       if (result.warnings.length > 0) {
@@ -70,6 +110,7 @@ export const SaiposImportModal: React.FC<Props> = ({ isOpen, onClose, banks, pay
       } else {
         alert('Importação concluída com sucesso!');
       }
+
       onSuccess();
       onClose();
       reset();
@@ -84,6 +125,8 @@ export const SaiposImportModal: React.FC<Props> = ({ isOpen, onClose, banks, pay
     setFile(null);
     setPreviewItems([]);
     setFileHash('');
+    setFromDate(undefined);
+    setToDate(undefined);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -98,7 +141,7 @@ export const SaiposImportModal: React.FC<Props> = ({ isOpen, onClose, banks, pay
             <p className="text-slate-500 text-xs font-medium uppercase tracking-widest mt-1">Sincronize suas vendas diárias do PDV.</p>
           </div>
           <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
           </button>
         </header>
 
@@ -106,21 +149,21 @@ export const SaiposImportModal: React.FC<Props> = ({ isOpen, onClose, banks, pay
           {!file ? (
             <label className="flex flex-col items-center justify-center py-20 border-2 border-dashed border-slate-800 rounded-[2rem] bg-slate-950/50 cursor-pointer hover:border-rose-500/50 transition-all group">
               <div className="w-16 h-16 bg-slate-900 rounded-2xl flex items-center justify-center mb-6 border border-slate-800 group-hover:border-rose-500/30 transition-all">
-                <svg className="text-rose-500" xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+                <svg className="text-rose-500" xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" x2="12" y1="3" y2="15" /></svg>
               </div>
               <h3 className="text-lg font-black text-white uppercase tracking-tight mb-2">Selecione o arquivo .xlsx</h3>
-              <p className="text-slate-500 text-sm mb-8 max-w-xs text-center font-medium">O arquivo deve conter o relatório de vendas por forma de pagamento exportado do seu sistema.</p>
-              <input 
-                type="file" 
-                accept=".xlsx" 
+              <p className="text-slate-500 text-sm mb-8 max-w-xs text-center font-medium">
+                O arquivo deve conter o relatório de vendas por forma de pagamento exportado do seu sistema.
+              </p>
+              <input
+                type="file"
+                accept=".xlsx"
                 ref={fileInputRef}
-                onChange={handleFileChange} 
-                className="hidden" 
+                onChange={handleFileChange}
+                className="hidden"
                 disabled={loading}
               />
-              <div 
-                className={`bg-rose-600 group-hover:bg-rose-500 text-white px-10 py-4 rounded-2xl font-black uppercase tracking-widest transition-all shadow-xl shadow-rose-950/50 ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
-              >
+              <div className={`bg-rose-600 group-hover:bg-rose-500 text-white px-10 py-4 rounded-2xl font-black uppercase tracking-widest transition-all shadow-xl shadow-rose-950/50 ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}>
                 {loading ? 'Lendo Arquivo...' : 'Escolher Arquivo'}
               </div>
             </label>
@@ -129,14 +172,25 @@ export const SaiposImportModal: React.FC<Props> = ({ isOpen, onClose, banks, pay
               <div className="flex justify-between items-center bg-slate-950 p-6 rounded-2xl border border-slate-800">
                 <div className="flex items-center gap-4">
                   <div className="w-12 h-12 bg-emerald-500/10 rounded-xl flex items-center justify-center border border-emerald-500/20">
-                    <svg className="text-emerald-500" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="m9 15 3 3 3-3"/></svg>
+                    <svg className="text-emerald-500" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" /><polyline points="14 2 14 8 20 8" /><path d="m9 15 3 3 3-3" /></svg>
                   </div>
                   <div>
                     <p className="text-white font-black text-sm uppercase">{file.name}</p>
-                    <p className="text-slate-500 text-[10px] font-bold uppercase tracking-widest">Período: {fromDate ? new Date(fromDate).toLocaleDateString('pt-BR') : '?'} até {toDate ? new Date(toDate).toLocaleDateString('pt-BR') : '?'}</p>
+                    <p className="text-slate-500 text-[10px] font-bold uppercase tracking-widest">
+                      Período: {fromDate ? new Date(fromDate).toLocaleDateString('pt-BR') : '?'} até {toDate ? new Date(toDate).toLocaleDateString('pt-BR') : '?'}
+                    </p>
                   </div>
                 </div>
-                <button onClick={reset} className="text-rose-500 text-[10px] font-black uppercase tracking-widest hover:underline">Trocar Arquivo</button>
+                <button onClick={reset} className="text-rose-500 text-[10px] font-black uppercase tracking-widest hover:underline">
+                  Trocar Arquivo
+                </button>
+              </div>
+
+              <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 px-4 py-4">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-300">Regra estrutural ativa</p>
+                <p className="text-xs text-cyan-100 leading-relaxed mt-2">
+                  Toda venda em <strong>DINHEIRO</strong> entra automaticamente como <strong>LIQUIDADO</strong> e vai para <strong>CAIXA EMPRESA</strong>.
+                </p>
               </div>
 
               <div className="overflow-x-auto rounded-2xl border border-slate-800">
@@ -152,46 +206,59 @@ export const SaiposImportModal: React.FC<Props> = ({ isOpen, onClose, banks, pay
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/50">
-                    {previewItems.map((item, index) => (
-                      <tr key={index} className="hover:bg-slate-800/20 transition-colors">
-                        <td className="px-6 py-4 text-[10px] font-bold text-slate-400">{new Date(item.date).toLocaleDateString('pt-BR')}</td>
-                        <td className="px-6 py-4">
-                          <span className="text-[10px] font-black text-slate-200 uppercase">{item.paymentLabel}</span>
-                        </td>
-                        <td className="px-6 py-4 text-[10px] font-black text-emerald-400">R$ {item.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
-                        <td className="px-6 py-4">
-                          <select 
-                            value={item.suggestedStatus}
-                            onChange={e => handleUpdateItem(index, { suggestedStatus: e.target.value as any })}
-                            className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[9px] font-black text-slate-300 outline-none focus:border-rose-500"
-                          >
-                            <option value="LIQUIDADO">LIQUIDADO</option>
-                            <option value="PROVISIONADO">PROVISIONADO</option>
-                          </select>
-                        </td>
-                        <td className="px-6 py-4">
-                          <select 
-                            value={item.suggestedBankId || ''}
-                            onChange={e => handleUpdateItem(index, { suggestedBankId: e.target.value })}
-                            disabled={item.suggestedStatus === 'PROVISIONADO'}
-                            className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[9px] font-black text-slate-300 outline-none focus:border-rose-500 disabled:opacity-30"
-                          >
-                            <option value="">Nenhum</option>
-                            {banks.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                          </select>
-                        </td>
-                        <td className="px-6 py-4">
-                          <select 
-                            value={item.suggestedMethodId || ''}
-                            onChange={e => handleUpdateItem(index, { suggestedMethodId: e.target.value })}
-                            className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[9px] font-black text-slate-300 outline-none focus:border-rose-500"
-                          >
-                            <option value="">Mapear para...</option>
-                            {paymentMethods.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                          </select>
-                        </td>
-                      </tr>
-                    ))}
+                    {previewItems.map((item, index) => {
+                      const cash = isCashItem(item);
+
+                      return (
+                        <tr key={index} className="hover:bg-slate-800/20 transition-colors">
+                          <td className="px-6 py-4 text-[10px] font-bold text-slate-400">
+                            {new Date(item.date).toLocaleDateString('pt-BR')}
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className="text-[10px] font-black text-slate-200 uppercase">{item.paymentLabel}</span>
+                          </td>
+                          <td className="px-6 py-4 text-[10px] font-black text-emerald-400">
+                            R$ {item.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="px-6 py-4">
+                            <select
+                              value={cash ? 'LIQUIDADO' : item.suggestedStatus}
+                              onChange={(e) => handleUpdateItem(index, { suggestedStatus: e.target.value as 'LIQUIDADO' | 'PROVISIONADO' })}
+                              disabled={cash}
+                              className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[9px] font-black text-slate-300 outline-none focus:border-rose-500 disabled:opacity-60"
+                            >
+                              <option value="LIQUIDADO">LIQUIDADO</option>
+                              <option value="PROVISIONADO">PROVISIONADO</option>
+                            </select>
+                          </td>
+                          <td className="px-6 py-4">
+                            <select
+                              value={cash ? (caixaEmpresaId || item.suggestedBankId || '') : (item.suggestedBankId || '')}
+                              onChange={(e) => handleUpdateItem(index, { suggestedBankId: e.target.value })}
+                              disabled={cash || item.suggestedStatus === 'PROVISIONADO'}
+                              className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[9px] font-black text-slate-300 outline-none focus:border-rose-500 disabled:opacity-60"
+                            >
+                              <option value="">Nenhum</option>
+                              {sortedBanks.map((b) => (
+                                <option key={b.id} value={b.id}>{b.name}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-6 py-4">
+                            <select
+                              value={item.suggestedMethodId || ''}
+                              onChange={(e) => handleUpdateItem(index, { suggestedMethodId: e.target.value })}
+                              className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[9px] font-black text-slate-300 outline-none focus:border-rose-500"
+                            >
+                              <option value="">Mapear para...</option>
+                              {sortedPaymentMethods.map((m) => (
+                                <option key={m.id} value={m.id}>{m.name}</option>
+                              ))}
+                            </select>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -200,9 +267,11 @@ export const SaiposImportModal: React.FC<Props> = ({ isOpen, onClose, banks, pay
         </div>
 
         <footer className="p-8 border-t border-slate-800 flex justify-end gap-4 shrink-0">
-          <button onClick={onClose} className="px-8 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest hover:text-white transition-all">Cancelar</button>
+          <button onClick={onClose} className="px-8 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest hover:text-white transition-all">
+            Cancelar
+          </button>
           {file && (
-            <button 
+            <button
               onClick={handleConfirm}
               disabled={importing}
               className="px-10 py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shadow-xl shadow-emerald-950/50 disabled:opacity-50"

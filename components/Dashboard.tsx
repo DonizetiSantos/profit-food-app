@@ -23,6 +23,7 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
   const stats = useMemo(() => {
     let realIncome = 0;
     let realExpense = 0;
+    let provIncome = 0;
     let provExpense = 0;
 
     postings.forEach(p => {
@@ -30,16 +31,17 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
         if (p.group === MainGroup.RECEITAS) realIncome += p.amount;
         if (p.group === MainGroup.DESPESAS) realExpense += p.amount;
       } else {
+        if (p.group === MainGroup.RECEITAS) provIncome += p.amount;
         if (p.group === MainGroup.DESPESAS) provExpense += p.amount;
       }
     });
 
     const currentBalance = realIncome - realExpense;
-    const projectedBalance = currentBalance - provExpense;
+    const projectedBalance = (realIncome + provIncome) - (realExpense + provExpense);
 
     const bankBalances: Record<string, number> = {};
     banks.forEach(b => bankBalances[b.id] = 0);
-    
+
     postings.forEach(p => {
       if (p.status === 'LIQUIDADO' && p.bankId) {
         if (p.group === MainGroup.RECEITAS) {
@@ -52,6 +54,7 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
 
     return {
       currentBalance,
+      provIncome,
       provExpense,
       projectedBalance,
       totalRealIncome: realIncome,
@@ -65,9 +68,9 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
     postings.forEach(p => {
       const date = p.status === 'LIQUIDADO' ? p.liquidationDate || p.occurrenceDate : p.dueDate;
       if (!date) return;
-      
+
       if (!dates[date]) dates[date] = { real: 0, prov: 0 };
-      
+
       if (p.status === 'LIQUIDADO') {
         if (p.group === MainGroup.RECEITAS) {
           dates[date].real += p.amount;
@@ -75,7 +78,9 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
           dates[date].real -= p.amount;
         }
       } else {
-        if (p.group === MainGroup.DESPESAS) {
+        if (p.group === MainGroup.RECEITAS) {
+          dates[date].prov += p.amount;
+        } else if (p.group === MainGroup.DESPESAS) {
           dates[date].prov -= p.amount;
         }
       }
@@ -675,7 +680,7 @@ export const Dashboard: React.FC<Props> = ({ postings, accounts, banks, onLiquid
               </h3>
             </div>
             <div className="flex justify-between items-end">
-              <p className="text-[8px] opacity-70 font-bold italic">Saldo Real - Saídas Pendentes</p>
+              <p className="text-[8px] opacity-70 font-bold italic">Saldo Real + Entradas Previstas - Saídas Previstas</p>
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="opacity-30"><path d="m22 7-8.5 8.5-5-5L2 17"/><path d="M16 7h6v6"/></svg>
             </div>
           </div>

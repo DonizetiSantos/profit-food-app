@@ -18,6 +18,7 @@ type RuleRow = PaymentSettlementRule & {
     name: string;
   } | null;
   isNew?: boolean;
+  isSpecificDraft?: boolean;
 };
 
 type TabKey = 'general' | 'cards' | 'balances';
@@ -54,7 +55,10 @@ const CARD_CORE_METHOD_SET = new Set([
 
 const sortRules = (items: RuleRow[]) => {
   return [...items].sort((a, b) => {
-    const methodCompare = (a.payment_methods?.name || '').localeCompare(b.payment_methods?.name || '', 'pt-BR');
+    const methodCompare = (a.payment_methods?.name || '').localeCompare(
+      b.payment_methods?.name || '',
+      'pt-BR'
+    );
     if (methodCompare !== 0) return methodCompare;
 
     const aSpecificity = `${a.card_brand || ''} ${a.acquirer_name || ''}`.trim();
@@ -89,7 +93,9 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
   const [success, setSuccess] = useState(false);
 
   const getMethodName = (rule: RuleRow) =>
-    rule.payment_methods?.name || paymentMethods.find((method) => method.id === rule.payment_method_id)?.name || 'Desconhecido';
+    rule.payment_methods?.name ||
+    paymentMethods.find((method) => method.id === rule.payment_method_id)?.name ||
+    'Desconhecido';
 
   const isCoreMethodRule = (rule: RuleRow) => CORE_METHOD_SET.has(normalizeText(getMethodName(rule)));
   const isCardMethodRule = (rule: RuleRow) => CARD_CORE_METHOD_SET.has(normalizeText(getMethodName(rule)));
@@ -134,6 +140,7 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
           notes: rule.notes || '',
           payment_methods: rule.payment_methods || { name: 'Desconhecido' },
           isNew: false,
+          isSpecificDraft: false,
         }));
 
         const baseMethods = loadedMethods.filter((method) => CORE_METHOD_SET.has(normalizeText(method.name)));
@@ -161,6 +168,7 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
             is_active: true,
             payment_methods: { name: method.name },
             isNew: true,
+            isSpecificDraft: false,
           }));
 
         setRules(sortRules([...existingRules, ...missingGenericRules]));
@@ -184,7 +192,11 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
   }, [rules, paymentMethods]);
 
   const cardSpecificRules = useMemo(() => {
-    return sortRules(rules.filter((rule) => (!!rule.card_brand || !!rule.acquirer_name) && isCardMethodRule(rule)));
+    return sortRules(
+      rules.filter(
+        (rule) => ((!!rule.card_brand || !!rule.acquirer_name) || !!rule.isSpecificDraft) && isCardMethodRule(rule)
+      )
+    );
   }, [rules, paymentMethods]);
 
   const legacyRules = useMemo(() => {
@@ -196,7 +208,20 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
   }, [legacyRules]);
 
   const handleUpdateRule = (id: string, field: keyof RuleRow, value: any) => {
-    setRules((prev) => prev.map((rule) => (rule.id === id ? { ...rule, [field]: value } : rule)));
+    setRules((prev) =>
+      prev.map((rule) => {
+        if (rule.id !== id) return rule;
+
+        const nextRule = { ...rule, [field]: value };
+        if (field === 'card_brand' || field === 'acquirer_name') {
+          const hasSpecificData = !!normalizeText(
+            field === 'card_brand' ? value : nextRule.card_brand
+          ) || !!normalizeText(field === 'acquirer_name' ? value : nextRule.acquirer_name);
+          nextRule.isSpecificDraft = hasSpecificData ? true : !!rule.isSpecificDraft;
+        }
+        return nextRule;
+      })
+    );
     setSuccess(false);
     setError(null);
   };
@@ -205,6 +230,21 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
     if (!activeCompany) return;
 
     const methodName = getMethodName(baseRule);
+    const alreadyHasBlankDraft = rules.some(
+      (rule) =>
+        rule.payment_method_id === baseRule.payment_method_id &&
+        !!rule.isSpecificDraft &&
+        !normalizeText(rule.card_brand) &&
+        !normalizeText(rule.acquirer_name)
+    );
+
+    if (alreadyHasBlankDraft) {
+      setActiveTab('cards');
+      setError('Já existe uma nova regra específica em aberto para esse meio. Preencha bandeira e/ou operadora antes de criar outra.');
+      setSuccess(false);
+      return;
+    }
+
     const newRule: RuleRow = {
       id: crypto.randomUUID(),
       company_id: activeCompany.id,
@@ -221,12 +261,13 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
       is_active: true,
       payment_methods: { name: methodName },
       isNew: true,
+      isSpecificDraft: true,
     };
 
     setRules((prev) => sortRules([...prev, newRule]));
     setActiveTab('cards');
     setSuccess(false);
-    setError(null);
+    setError('Nova regra específica criada. Preencha a bandeira e/ou a operadora antes de salvar.');
   };
 
   const handleRemoveUnsavedRule = (id: string) => {
@@ -298,6 +339,19 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
     for (const rule of rows) {
       if (!isCoreMethodRule(rule)) continue;
 
+      const isSpecificCardRule = isCardMethodRule(rule) && (!!rule.card_brand || !!rule.acquirer_name || !!rule.isSpecificDraft);
+
+      if (isSpecificCardRule) {
+        const hasBrand = !!normalizeText(rule.card_brand);
+        const hasAcquirer = !!normalizeText(rule.acquirer_name);
+
+        if (!hasBrand && !hasAcquirer) {
+          throw new Error(
+            `A regra específica de ${getMethodName(rule)} precisa ter pelo menos bandeira ou operadora preenchida.`
+          );
+        }
+      }
+
       const key = [
         rule.payment_method_id,
         normalizeText(rule.card_brand),
@@ -312,14 +366,6 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
 
     if (duplicateKeys.size > 0) {
       throw new Error('Existem regras duplicadas com o mesmo meio, bandeira e operadora.');
-    }
-
-    for (const rule of rows) {
-      if (isCardMethodRule(rule) && (!!rule.card_brand || !!rule.acquirer_name)) {
-        if (!normalizeText(rule.card_brand) && !normalizeText(rule.acquirer_name)) {
-          throw new Error('Toda regra específica de cartão precisa ter bandeira ou operadora.');
-        }
-      }
     }
   };
 
@@ -345,7 +391,7 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
 
       const normalizedRules = rules
         .filter((rule) => isCoreMethodRule(rule))
-        .map(({ payment_methods, isNew, ...rule }) => ({
+        .map(({ payment_methods, isNew, isSpecificDraft, ...rule }) => ({
           ...rule,
           company_id: activeCompany.id,
           payment_method_id: rule.payment_method_id,
@@ -392,7 +438,13 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
         if (updateError) throw updateError;
       }
 
-      setRules((prev) => sortRules(prev.filter((rule) => isCoreMethodRule(rule)).map((rule) => ({ ...rule, isNew: false }))));
+      setRules((prev) =>
+        sortRules(
+          prev
+            .filter((rule) => isCoreMethodRule(rule))
+            .map((rule) => ({ ...rule, isNew: false, isSpecificDraft: false }))
+        )
+      );
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err: any) {
@@ -505,6 +557,27 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
         Aqui ficam apenas as regras específicas de cartões sobre os meios base <strong>Cartão Crédito</strong> e <strong>Cartão Débito</strong>. Use <strong>bandeira</strong> e/ou <strong>operadora</strong> para especializar a regra.
       </div>
 
+      {genericCardRules.length > 0 && (
+        <div className="rounded-2xl border border-slate-800 bg-slate-950/60 px-4 py-4">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500 mb-2">Atalhos para nova regra específica</p>
+              <p className="text-xs text-slate-400">Clique no meio base desejado para abrir uma nova linha de regra específica nesta aba.</p>
+            </div>
+            <div className="text-[10px] font-black uppercase tracking-widest text-cyan-400">
+              Preencha bandeira e/ou operadora antes de salvar
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 mt-3">
+            {genericCardRules.map((rule) => (
+              <button key={rule.id} onClick={() => handleAddSpecificRule(rule)} className="px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest bg-slate-800 hover:bg-slate-700 text-cyan-400 transition-all">
+                + {getMethodName(rule)}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <ScrollTableShell minWidth="1180px">
         <table className="w-full text-left border-collapse">
           <thead className="sticky top-0 z-20">
@@ -524,7 +597,9 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
           <tbody className="divide-y divide-slate-800/50">
             {cardSpecificRules.length === 0 ? (
               <tr>
-                <td colSpan={10} className="px-6 py-10 text-center text-sm font-semibold text-slate-500">Nenhuma regra específica de cartão cadastrada ainda.</td>
+                <td colSpan={10} className="px-6 py-10 text-center text-sm font-semibold text-slate-500">
+                  Nenhuma regra específica de cartão cadastrada ainda. Use os atalhos acima para criar a primeira.
+                </td>
               </tr>
             ) : (
               cardSpecificRules.map((rule) => (
@@ -589,19 +664,6 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
           </tbody>
         </table>
       </ScrollTableShell>
-
-      {genericCardRules.length > 0 && (
-        <div className="rounded-2xl border border-slate-800 bg-slate-950/60 px-4 py-4">
-          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500 mb-3">Atalhos para nova regra específica</p>
-          <div className="flex flex-wrap gap-2">
-            {genericCardRules.map((rule) => (
-              <button key={rule.id} onClick={() => handleAddSpecificRule(rule)} className="px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest bg-slate-800 hover:bg-slate-700 text-cyan-400 transition-all">
-                + {getMethodName(rule)}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 

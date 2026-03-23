@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Account, Bank, PaymentMethod, Entity, FinancialPosting, MainGroup, XmlItem, XmlMapping } from '../types';
 import { parseNfeXml, normalizeProductName, NfeData } from '../services/xmlParser';
 import { favoredService } from '../services/favoredService';
@@ -40,6 +40,28 @@ export const XmlImportModal: React.FC<Props> = ({
   const [liquidationDate, setLiquidationDate] = useState('');
   const [selectedBank, setSelectedBank] = useState('');
   const [selectedMethod, setSelectedMethod] = useState('');
+
+  const sortedEntities = useMemo(
+    () => [...entities].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')),
+    [entities]
+  );
+
+  const sortedExpenseAccounts = useMemo(
+    () => [...accounts]
+      .filter(a => a.groupId === MainGroup.DESPESAS)
+      .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')),
+    [accounts]
+  );
+
+  const sortedBanks = useMemo(
+    () => [...banks].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')),
+    [banks]
+  );
+
+  const sortedPaymentMethods = useMemo(
+    () => [...paymentMethods].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')),
+    [paymentMethods]
+  );
 
   useEffect(() => {
     if (nfeData) {
@@ -300,7 +322,7 @@ export const XmlImportModal: React.FC<Props> = ({
                     className="text-[10px] p-2 bg-slate-900 border border-slate-800 rounded-xl outline-none font-bold text-slate-300"
                    >
                     <option value="">Auto-identificar...</option>
-                    {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                    {sortedEntities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
                    </select>
                    <button onClick={reset} className="text-[9px] font-black text-rose-500 uppercase tracking-widest hover:underline text-left">Trocar Arquivo</button>
                 </div>
@@ -330,7 +352,7 @@ export const XmlImportModal: React.FC<Props> = ({
                           className={`text-[10px] p-2.5 bg-slate-900 border rounded-xl outline-none font-bold min-w-[200px] ${itemMappings[idx] ? 'border-emerald-500/30 text-emerald-400' : 'border-rose-500/30 text-rose-400'}`}
                         >
                           <option value="">Mapear para...</option>
-                          {accounts.filter(a => a.groupId === MainGroup.DESPESAS).map(acc => (
+                          {sortedExpenseAccounts.map(acc => (
                             <option key={acc.id} value={acc.id}>{acc.name}</option>
                           ))}
                         </select>
@@ -391,7 +413,7 @@ export const XmlImportModal: React.FC<Props> = ({
                         <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Banco</label>
                         <select value={selectedBank} onChange={e => setSelectedBank(e.target.value)} className="p-3 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white outline-none focus:border-rose-500">
                           <option value="">Selecionar...</option>
-                          {banks.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                          {sortedBanks.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
                         </select>
                       </div>
                     </>
@@ -400,7 +422,7 @@ export const XmlImportModal: React.FC<Props> = ({
                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Operação</label>
                     <select value={selectedMethod} onChange={e => setSelectedMethod(e.target.value)} className="p-3 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white outline-none focus:border-rose-500">
                       <option value="">Selecionar...</option>
-                      {paymentMethods.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                      {sortedPaymentMethods.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
                     </select>
                   </div>
                 </div>

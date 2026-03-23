@@ -1,8 +1,7 @@
 import { supabase } from '../src/lib/supabase';
 import { sha256 } from './hash';
-import { parseSaiposXlsx, SaiposVendaRow } from './parsers/saiposParser';
-import { FinancialPosting, MainGroup } from '../types';
-import { accountService } from './accountService';
+import { parseSaiposClosing } from './parsers/saiposParser';
+import { PaymentSettlementRule } from '../types';
 import { settlementService } from './settlementService';
 
 export interface PdvMapping {
@@ -15,12 +14,24 @@ export interface PdvMapping {
   default_bank_id?: string;
 }
 
-export interface SaiposImportPreviewItem extends SaiposVendaRow {
+export interface SaiposImportPreviewItem {
+  date: string;
+  paymentLabel: string;
+  amount: number;
   mapping?: PdvMapping;
   suggestedStatus: 'LIQUIDADO' | 'PROVISIONADO';
   suggestedBankId?: string;
   suggestedMethodId?: string;
 }
+
+const normalizeText = (value: string | null | undefined) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+const isCashLabel = (label: string) => normalizeText(label).includes('dinheiro');
 
 export const saiposImportService = {
   async getMappings(labels: string[], companyId: string): Promise<Record<string, PdvMapping>> {
@@ -34,25 +45,25 @@ export const saiposImportService = {
     if (error) throw error;
 
     const mappingMap: Record<string, PdvMapping> = {};
-    data?.forEach(m => {
+    data?.forEach((m) => {
       mappingMap[m.raw_label] = m;
     });
     return mappingMap;
   },
 
   applyAutoRules(label: string): Partial<PdvMapping> {
-    const lower = label.toLowerCase();
-    
+    const lower = normalizeText(label);
+
     if (lower.includes('dinheiro')) {
       return { default_status: 'LIQUIDADO', normalized_label: 'DINHEIRO' };
     }
     if (lower.includes('pix')) {
       return { default_status: 'LIQUIDADO', normalized_label: 'PIX' };
     }
-    if (lower.includes('crédito') || lower.includes('credito')) {
+    if (lower.includes('credito')) {
       return { default_status: 'PROVISIONADO', normalized_label: 'CARTÃO CRÉDITO' };
     }
-    if (lower.includes('débito') || lower.includes('debito')) {
+    if (lower.includes('debito')) {
       return { default_status: 'PROVISIONADO', normalized_label: 'CARTÃO DÉBITO' };
     }
     if (lower.includes('ifood')) {
@@ -65,16 +76,18 @@ export const saiposImportService = {
     return { default_status: 'PROVISIONADO' };
   },
 
-  async preparePreview(file: File, companyId: string): Promise<{ 
-    items: SaiposImportPreviewItem[]; 
+  async preparePreview(
+    file: File,
+    companyId: string
+  ): Promise<{
+    items: SaiposImportPreviewItem[];
     fileHash: string;
     fromDate?: string;
     toDate?: string;
   }> {
-    const text = await file.text(); // For hash
+    const text = await file.text();
     const fileHash = await sha256(text);
 
-    // Check duplicate
     const { data: existing } = await supabase
       .from('pdv_imports')
       .select('id')
@@ -86,28 +99,44 @@ export const saiposImportService = {
       throw new Error('Este arquivo já foi importado anteriormente.');
     }
 
-    const parsed = await parseSaiposXlsx(file);
-    const labels = Array.from(new Set(parsed.rows.map(r => r.paymentLabel)));
+    const { data: rules } = await supabase
+      .from('payment_settlement_rules')
+      .select('*, payment_methods(name)')
+      .eq('company_id', companyId)
+      .eq('is_active', true);
+
+    const settlementRules = (rules || []) as PaymentSettlementRule[];
+    const fallbackDate = new Date().toISOString().split('T')[0];
+    const parsed = await parseSaiposClosing(file, companyId, fallbackDate, settlementRules);
+
+    const labels = Array.from(new Set(parsed.rows.map((r) => r.rawLabel)));
     const mappings = await this.getMappings(labels, companyId);
 
-    const items: SaiposImportPreviewItem[] = parsed.rows.map(row => {
-      const mapping = mappings[row.paymentLabel];
-      const auto = this.applyAutoRules(row.paymentLabel);
+    const items: SaiposImportPreviewItem[] = parsed.rows.map((row) => {
+      const mapping = mappings[row.rawLabel];
+      const auto = this.applyAutoRules(row.rawLabel);
+      const cash = isCashLabel(row.rawLabel);
 
       return {
-        ...row,
+        date: row.closingDate,
+        paymentLabel: row.rawLabel,
+        amount: Number(row.grossAmount || row.amount || 0),
         mapping,
-        suggestedStatus: mapping?.default_status || auto.default_status || 'PROVISIONADO',
-        suggestedBankId: mapping?.default_bank_id,
-        suggestedMethodId: mapping?.payment_method_id
+        suggestedStatus: cash
+          ? 'LIQUIDADO'
+          : (mapping?.default_status || row.mappedStatus || auto.default_status || 'PROVISIONADO'),
+        suggestedBankId: cash
+          ? (mapping?.default_bank_id || row.defaultBankId || undefined)
+          : (mapping?.default_bank_id || row.defaultBankId || undefined),
+        suggestedMethodId: mapping?.payment_method_id || row.paymentMethodId || undefined
       };
     });
 
     return {
       items,
       fileHash,
-      fromDate: parsed.fromDate,
-      toDate: parsed.toDate
+      fromDate: parsed.closingDate,
+      toDate: parsed.closingDate
     };
   },
 
@@ -132,8 +161,7 @@ export const saiposImportService = {
       console.warn('[SaiposImport] Conta de taxas não encontrada para a empresa. As taxas não serão lançadas separadamente.');
       warnings.push('Conta de taxas não encontrada. As taxas automáticas não foram lançadas.');
     }
-    
-    // 1. Create PDV Import record
+
     const importId = crypto.randomUUID();
     const { error: importError } = await supabase
       .from('pdv_imports')
@@ -151,15 +179,13 @@ export const saiposImportService = {
 
     if (importError) throw importError;
 
-    // 2. Prepare Postings and Mappings
     const postings: any[] = [];
     const mappingsToUpsert: any[] = [];
+    const importItems: any[] = [];
     const seenLabels = new Set<string>();
 
     for (const item of items) {
       const postingId = crypto.randomUUID();
-      
-      // Resolve settlement rules
       const settlement = await settlementService.resolvePaymentSettlement(
         companyId,
         item.suggestedMethodId || null,
@@ -167,49 +193,56 @@ export const saiposImportService = {
         item.date
       );
 
-      // Determine bank
-      let bankId = item.suggestedBankId;
-      if (!bankId && settlement.status === 'LIQUIDADO') {
-        if (item.paymentLabel.toLowerCase().includes('dinheiro')) {
-          bankId = caixaEmpresaId;
-        }
-      }
+      const cash = isCashLabel(item.paymentLabel);
+      const finalStatus: 'LIQUIDADO' | 'PROVISIONADO' = cash ? 'LIQUIDADO' : item.suggestedStatus;
+      const finalDueDate = finalStatus === 'LIQUIDADO' ? item.date : (settlement.dueDate || item.date);
+      const finalLiquidationDate = finalStatus === 'LIQUIDADO' ? item.date : null;
+      const bankId = cash
+        ? (caixaEmpresaId || item.suggestedBankId || null)
+        : (item.suggestedBankId || null);
 
-      // Main Revenue Posting (Gross Amount)
       postings.push({
         id: postingId,
         company_id: companyId,
-        status: settlement.status,
+        status: finalStatus,
         competence_date: item.date,
         occurrence_date: item.date,
-        due_date: settlement.dueDate,
-        liquidation_date: settlement.liquidationDate,
+        due_date: finalDueDate,
+        liquidation_date: finalLiquidationDate,
         group: 'RECEITAS',
         account_id: accountId,
         observations: `Importação Saipos - ${item.paymentLabel}`,
         payment_method_id: item.suggestedMethodId || null,
         amount: item.amount,
-        bank_id: bankId || null
+        bank_id: bankId
       });
 
-      // Fee Posting (if applicable)
       if (settlement.feeAmount > 0 && feeAccountId) {
         postings.push({
           id: crypto.randomUUID(),
           company_id: companyId,
-          status: settlement.status,
+          status: finalStatus,
           competence_date: item.date,
           occurrence_date: item.date,
-          due_date: settlement.dueDate,
-          liquidation_date: settlement.liquidationDate,
+          due_date: finalDueDate,
+          liquidation_date: finalLiquidationDate,
           group: 'DESPESAS',
           account_id: feeAccountId,
           observations: `Taxa ${item.paymentLabel} - Ref. Saipos ${item.date}`,
           payment_method_id: item.suggestedMethodId || null,
           amount: settlement.feeAmount,
-          bank_id: bankId || null
+          bank_id: bankId
         });
       }
+
+      importItems.push({
+        company_id: companyId,
+        pdv_import_id: importId,
+        posting_id: postingId,
+        raw_label: item.paymentLabel,
+        amount: item.amount,
+        day: item.date
+      });
 
       if (!seenLabels.has(item.paymentLabel)) {
         mappingsToUpsert.push({
@@ -217,49 +250,31 @@ export const saiposImportService = {
           source: 'SAIPOS',
           raw_label: item.paymentLabel,
           payment_method_id: item.suggestedMethodId || null,
-          default_status: item.suggestedStatus,
-          default_bank_id: item.suggestedBankId || null
+          default_status: cash ? 'LIQUIDADO' : item.suggestedStatus,
+          default_bank_id: cash
+            ? (caixaEmpresaId || item.suggestedBankId || null)
+            : (item.suggestedBankId || null)
         });
         seenLabels.add(item.paymentLabel);
       }
     }
 
-    // 3. Persist everything
-    // Upsert mappings
     if (mappingsToUpsert.length > 0) {
-      await supabase.from('pdv_payment_mapping').upsert(mappingsToUpsert, { onConflict: 'company_id, source, raw_label' });
+      const { error: mappingError } = await supabase
+        .from('pdv_payment_mapping')
+        .upsert(mappingsToUpsert, { onConflict: 'company_id, source, raw_label' });
+      if (mappingError) throw mappingError;
     }
 
-    // Insert postings
-    const { error: postError } = await supabase.from('postings').insert(postings);
-    if (postError) throw postError;
+    if (postings.length > 0) {
+      const { error: postError } = await supabase.from('postings').insert(postings);
+      if (postError) throw postError;
+    }
 
-    // Insert import items
-    // Note: We only link the main revenue posting to the import item for tracking
-    const importItems = items.map((item, i) => {
-      // The main posting for this item is at index i * (1 or 2)
-      // But it's safer to find it by ID if we stored it.
-      // Let's just use the postings array we built.
-      // Actually, the postings array has 1 or 2 entries per item.
-      // Let's find the revenue posting for this item.
-      const mainPosting = postings.find(p => 
-        p.amount === item.amount && 
-        p.group === 'RECEITAS' && 
-        p.observations.includes(item.paymentLabel) &&
-        p.competence_date === item.date
-      );
-
-      return {
-        company_id: companyId,
-        pdv_import_id: importId,
-        posting_id: mainPosting?.id || postings[0].id, // Fallback
-        raw_label: item.paymentLabel,
-        amount: item.amount,
-        day: item.date
-      };
-    });
-
-    await supabase.from('pdv_import_items').insert(importItems);
+    if (importItems.length > 0) {
+      const { error: importItemsError } = await supabase.from('pdv_import_items').insert(importItems);
+      if (importItemsError) throw importItemsError;
+    }
 
     return { warnings };
   }
