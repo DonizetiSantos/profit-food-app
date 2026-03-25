@@ -382,69 +382,146 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
 
       const { data: existingRows, error: existingRowsError } = await supabase
         .from('payment_settlement_rules')
-        .select('id')
+        .select('id, payment_method_id, card_brand, acquirer_name, created_at')
         .eq('company_id', activeCompany.id);
 
       if (existingRowsError) throw existingRowsError;
 
-      const existingIds = new Set(((existingRows as { id: string }[]) || []).map((row) => row.id));
+      const buildRuleKey = (paymentMethodId: string, cardBrand?: string | null, acquirerName?: string | null) =>
+        [
+          paymentMethodId,
+          normalizeText(cardBrand),
+          normalizeText(acquirerName),
+        ].join('|');
 
-      const normalizedRules = rules
+      type ExistingRuleRow = {
+        id: string;
+        payment_method_id: string;
+        card_brand: string | null;
+        acquirer_name: string | null;
+        created_at: string | null;
+      };
+
+      const existingRowsTyped: ExistingRuleRow[] = (existingRows as ExistingRuleRow[]) || [];
+
+      const existingById = new Map(
+        existingRowsTyped.map((row) => [row.id, row])
+      );
+
+      const existingIdByCompositeKey = new Map(
+        existingRowsTyped.map((row) => [
+          buildRuleKey(row.payment_method_id, row.card_brand, row.acquirer_name),
+          row.id,
+        ])
+      );
+
+      const payload = rules
         .filter((rule) => isCoreMethodRule(rule))
-        .map(({ payment_methods, isNew, isSpecificDraft, ...rule }) => ({
-          ...rule,
-          company_id: activeCompany.id,
-          payment_method_id: rule.payment_method_id,
-          settlement_days: Number(rule.settlement_days) || 0,
-          receives_same_day: !!rule.receives_same_day,
-          default_status: rule.default_status,
-          fee_percent: Number(rule.fee_percent) || 0,
-          fee_fixed: Number(rule.fee_fixed) || 0,
-          default_bank_id: rule.default_bank_id || null,
-          card_brand: isCardMethodRule({ ...rule, payment_methods } as RuleRow)
+        .map(({ payment_methods, isNew, isSpecificDraft, ...rule }) => {
+          const isCardRule = isCardMethodRule({ ...rule, payment_methods } as RuleRow);
+
+          const normalizedCardBrand = isCardRule
             ? ((rule.card_brand || '').trim() || null)
-            : null,
-          acquirer_name: isCardMethodRule({ ...rule, payment_methods } as RuleRow)
+            : null;
+
+          const normalizedAcquirerName = isCardRule
             ? ((rule.acquirer_name || '').trim() || null)
-            : null,
-          notes: rule.notes || '',
-          is_active: rule.is_active ?? true,
-        }));
+            : null;
 
-      const rulesToInsert = normalizedRules
-        .filter((rule) => !existingIds.has(rule.id))
-        .map((rule) => ({
-          ...rule,
-          created_at: now,
-        }));
+          const compositeKey = buildRuleKey(
+            rule.payment_method_id,
+            normalizedCardBrand,
+            normalizedAcquirerName
+          );
 
-      const rulesToUpdate = normalizedRules
-        .filter((rule) => existingIds.has(rule.id))
-        .map((rule) => ({
-          ...rule,
-          updated_at: now,
-        }));
+          const existingIdForSameComposite = existingIdByCompositeKey.get(compositeKey);
 
-      if (rulesToInsert.length > 0) {
-        const { error: insertError } = await supabase.from('payment_settlement_rules').insert(rulesToInsert);
-        if (insertError) throw insertError;
-      }
+          const persistedId =
+            existingById.has(rule.id)
+              ? rule.id
+              : (existingIdForSameComposite || rule.id);
 
-      if (rulesToUpdate.length > 0) {
-        const { error: updateError } = await supabase
+          const existingPersistedRow = existingById.get(persistedId);
+
+          return {
+            id: persistedId,
+            company_id: activeCompany.id,
+            payment_method_id: rule.payment_method_id,
+            settlement_days: Number(rule.settlement_days) || 0,
+            receives_same_day: !!rule.receives_same_day,
+            default_status: rule.default_status,
+            fee_percent: Number(rule.fee_percent) || 0,
+            fee_fixed: Number(rule.fee_fixed) || 0,
+            default_bank_id: rule.default_bank_id || null,
+            card_brand: normalizedCardBrand,
+            acquirer_name: normalizedAcquirerName,
+            notes: rule.notes || '',
+            is_active: rule.is_active ?? true,
+            created_at: existingPersistedRow?.created_at || now,
+            updated_at: now,
+          };
+        });
+
+      if (payload.length > 0) {
+        const { error: saveError } = await supabase
           .from('payment_settlement_rules')
-          .upsert(rulesToUpdate, { onConflict: 'id' });
+          .upsert(payload, { onConflict: 'id' });
 
-        if (updateError) throw updateError;
+        if (saveError) throw saveError;
       }
+
+      const refreshedExistingById = new Map(
+        payload.map((row) => [
+          row.id,
+          {
+            id: row.id,
+            payment_method_id: row.payment_method_id,
+            card_brand: row.card_brand,
+            acquirer_name: row.acquirer_name,
+            created_at: row.created_at,
+          },
+        ])
+      );
+
+      const refreshedExistingIdByCompositeKey = new Map(
+        payload.map((row) => [
+          buildRuleKey(row.payment_method_id, row.card_brand, row.acquirer_name),
+          row.id,
+        ])
+      );
 
       setRules((prev) =>
         sortRules(
           prev
             .filter((rule) => isCoreMethodRule(rule))
-            .map((rule) => ({ ...rule, isNew: false, isSpecificDraft: false }))
+            .map((rule) => {
+              const isCardRule = isCardMethodRule(rule);
+              const normalizedCardBrand = isCardRule ? ((rule.card_brand || '').trim() || null) : null;
+              const normalizedAcquirerName = isCardRule ? ((rule.acquirer_name || '').trim() || null) : null;
+
+              const compositeKey = buildRuleKey(
+                rule.payment_method_id,
+                normalizedCardBrand,
+                normalizedAcquirerName
+              );
+
+              const persistedId =
+                refreshedExistingById.has(rule.id)
+                  ? rule.id
+                  : (refreshedExistingIdByCompositeKey.get(compositeKey) || rule.id);
+
+              return {
+                ...rule,
+                id: persistedId,
+                card_brand: normalizedCardBrand || '',
+                acquirer_name: normalizedAcquirerName || '',
+                isNew: false,
+                isSpecificDraft: false,
+              };
+            })
         )
       );
+
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err: any) {
