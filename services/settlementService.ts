@@ -21,7 +21,33 @@ const normalizeText = (value: string | null | undefined) =>
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
 
-const includesAny = (text: string, terms: string[]) => terms.some((term) => text.includes(term));
+const includesAny = (text: string, terms: string[]) =>
+  terms.some((term) => text.includes(term));
+
+const APP_FEE_TERMS = [
+  'ifood',
+  'aplicativo',
+  'aplicativo delivery',
+  'delivery app',
+  'app',
+  'pago online',
+  'online',
+  'pix online',
+  'gateway',
+  'anota ai',
+  'anota aí',
+];
+
+const CARD_FEE_TERMS = [
+  'cartao',
+  'cartão',
+  'credito',
+  'crédito',
+  'debito',
+  'débito',
+  'voucher',
+  'vale',
+];
 
 export const settlementService = {
   async resolvePaymentSettlement(
@@ -39,45 +65,56 @@ export const settlementService = {
       feeAmount: 0,
       netAmount: grossAmount,
       receivesSameDay: false,
-      ruleFound: false
+      ruleFound: false,
     };
 
     if (!paymentMethodId) return defaultResult;
 
     try {
-      const { data: rule, error } = await supabase
+      const { data: rules, error } = await supabase
         .from('payment_settlement_rules')
         .select('*')
         .eq('company_id', companyId)
         .eq('payment_method_id', paymentMethodId)
-        .eq('is_active', true)
-        .maybeSingle();
+        .eq('is_active', true);
 
       if (error) {
         console.error('[SettlementService] Error fetching rule:', error);
         return defaultResult;
       }
 
-      if (!rule) return defaultResult;
+      if (!rules || rules.length === 0) return defaultResult;
 
-      const feePercent = rule.fee_percent || 0;
-      const feeFixed = rule.fee_fixed || 0;
-      const feeAmount = Number((grossAmount * (feePercent / 100) + feeFixed).toFixed(2));
+      const genericRule =
+        rules.find(
+          (rule) =>
+            !normalizeText(rule.card_brand) &&
+            !normalizeText(rule.acquirer_name)
+        ) || rules[0];
+
+      if (!genericRule) return defaultResult;
+
+      const feePercent = genericRule.fee_percent || 0;
+      const feeFixed = genericRule.fee_fixed || 0;
+      const feeAmount = Number(
+        (grossAmount * (feePercent / 100) + feeFixed).toFixed(2)
+      );
       const netAmount = Number((grossAmount - feeAmount).toFixed(2));
 
-      const settlementDays = rule.settlement_days || 0;
-      const receivesSameDay = rule.receives_same_day || false;
+      const settlementDays = genericRule.settlement_days || 0;
+      const receivesSameDay = genericRule.receives_same_day || false;
 
-      let status = rule.default_status || 'PROVISIONADO';
+      let status: 'LIQUIDADO' | 'PROVISIONADO' =
+        genericRule.default_status || 'PROVISIONADO';
       let dueDate = referenceDate;
-      let liquidationDate = null;
+      let liquidationDate: string | null = null;
 
       if (receivesSameDay) {
         status = 'LIQUIDADO';
         dueDate = referenceDate;
         liquidationDate = referenceDate;
       } else {
-        const date = new Date(referenceDate + 'T12:00:00');
+        const date = new Date(`${referenceDate}T12:00:00`);
         date.setDate(date.getDate() + settlementDays);
         dueDate = date.toISOString().split('T')[0];
         liquidationDate = status === 'LIQUIDADO' ? dueDate : null;
@@ -92,7 +129,7 @@ export const settlementService = {
         feeAmount,
         netAmount,
         receivesSameDay,
-        ruleFound: true
+        ruleFound: true,
       };
     } catch (err) {
       console.error('[SettlementService] Unexpected error:', err);
@@ -108,7 +145,7 @@ export const settlementService = {
       'TAXAS FINANCEIRAS',
       'DESPESAS COM VENDAS',
       'DESPESAS VARIÁVEIS DE VENDAS',
-      'TAXAS DE ANTECIPAÇÃO'
+      'TAXAS DE ANTECIPAÇÃO',
     ];
 
     try {
@@ -132,7 +169,10 @@ export const settlementService = {
         companyId,
         'TAXAS CARTÕES',
         MainGroup.DESPESAS,
-        { createIfMissing: true, defaultSubgroupId: 's-despesas-vendas' }
+        {
+          createIfMissing: true,
+          defaultSubgroupId: 's-despesas-vendas',
+        }
       );
 
       return fallbackId;
@@ -142,13 +182,76 @@ export const settlementService = {
     }
   },
 
+  async resolveCompanyFeeAccountByPaymentMethod(
+    companyId: string,
+    paymentMethodId?: string | null,
+    fallbackLabel?: string | null
+  ): Promise<string | null> {
+    try {
+      let methodName = normalizeText(fallbackLabel);
+
+      if (paymentMethodId) {
+        const { data: method, error } = await supabase
+          .from('payment_methods')
+          .select('name')
+          .eq('id', paymentMethodId)
+          .maybeSingle();
+
+        if (error) throw error;
+
+        const dbMethodName = normalizeText(method?.name);
+        if (dbMethodName) {
+          methodName = dbMethodName;
+        }
+      }
+
+      const isAppFee = includesAny(methodName, APP_FEE_TERMS);
+      const isCardFee = includesAny(methodName, CARD_FEE_TERMS);
+
+      if (isAppFee) {
+        return await accountService.resolveAccountByName(
+          companyId,
+          'TAXA APLICATIVO',
+          MainGroup.DESPESAS,
+          {
+            createIfMissing: true,
+            defaultSubgroupId: 's-despesas-vendas',
+          }
+        );
+      }
+
+      if (isCardFee) {
+        return await accountService.resolveAccountByName(
+          companyId,
+          'TAXAS CARTÕES',
+          MainGroup.DESPESAS,
+          {
+            createIfMissing: true,
+            defaultSubgroupId: 's-despesas-vendas',
+          }
+        );
+      }
+
+      return await this.resolveCompanyFeeAccount(companyId);
+    } catch (err) {
+      console.error(
+        '[SettlementService] Error resolving fee account by payment method:',
+        err
+      );
+      return await this.resolveCompanyFeeAccount(companyId);
+    }
+  },
+
   async resolveCompanyRevenueAccount(companyId: string): Promise<string | null> {
     try {
       const id = await accountService.resolveAccountByName(
         companyId,
         'VENDAS GERAIS',
         MainGroup.RECEITAS,
-        { createIfMissing: true, defaultSubgroupId: 's-entradas-op' }
+        {
+          createIfMissing: true,
+          defaultSubgroupId: 's-entradas-op',
+        }
       );
       return id;
     } catch (err) {
@@ -157,7 +260,10 @@ export const settlementService = {
     }
   },
 
-  async resolveReceiptAccountByPaymentMethod(companyId: string, paymentMethodId: string): Promise<string | null> {
+  async resolveReceiptAccountByPaymentMethod(
+    companyId: string,
+    paymentMethodId: string
+  ): Promise<string | null> {
     try {
       const { data: method, error } = await supabase
         .from('payment_methods')
@@ -178,11 +284,22 @@ export const settlementService = {
         targetAccountName = 'RECEBIMENTO CARTÃO DÉBITO';
       } else if (includesAny(methodName, ['voucher', 'vale'])) {
         targetAccountName = 'RECEBIMENTO VOUCHER';
-      } else if (includesAny(methodName, ['ifood', 'aplicativo', 'delivery app', 'app'])) {
+      } else if (
+        includesAny(methodName, ['ifood', 'aplicativo', 'delivery app', 'app'])
+      ) {
         targetAccountName = 'RECEBIMENTO APLICATIVO';
-      } else if (includesAny(methodName, ['pago online', 'online', 'pix online', 'gateway'])) {
+      } else if (
+        includesAny(methodName, ['pago online', 'online', 'pix online', 'gateway'])
+      ) {
         targetAccountName = 'RECEBIMENTO PAGO ONLINE';
-      } else if (includesAny(methodName, ['deposito', 'transferencia', 'transferência', 'debito em conta'])) {
+      } else if (
+        includesAny(methodName, [
+          'deposito',
+          'transferencia',
+          'transferência',
+          'debito em conta',
+        ])
+      ) {
         targetAccountName = 'RECEBIMENTO DEPÓSITO / TRANSFERÊNCIA';
       } else if (includesAny(methodName, ['pix'])) {
         targetAccountName = 'RECEBIMENTO PIX';
@@ -202,7 +319,10 @@ export const settlementService = {
         companyId,
         targetAccountName,
         MainGroup.RECEITAS,
-        { createIfMissing: true, defaultSubgroupId: 's-entradas-op' }
+        {
+          createIfMissing: true,
+          defaultSubgroupId: 's-entradas-op',
+        }
       );
 
       return id;
@@ -210,5 +330,5 @@ export const settlementService = {
       console.error('[SettlementService] Error resolving receipt account:', err);
       return null;
     }
-  }
+  },
 };

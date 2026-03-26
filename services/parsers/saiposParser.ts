@@ -16,18 +16,64 @@ function normalizeHeader(value: unknown): string {
 
 /**
  * Converte valores monetários/textuais em número.
+ *
+ * Suporta corretamente:
+ * - 115,23
+ * - 115.23
+ * - 1.234,56
+ * - 1,234.56
+ * - valores com símbolo R$, espaços e separadores
+ *
+ * Regra:
+ * - se houver vírgula e ponto, o último separador encontrado é tratado como decimal
+ * - se houver apenas vírgula, vírgula é decimal
+ * - se houver apenas ponto, ponto é decimal
  */
 function parseBrazilianNumber(value: unknown): number {
-  if (typeof value === 'number') return value;
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : 0;
+  }
 
   const text = String(value ?? '').trim();
   if (!text) return 0;
 
-  const normalized = text
+  const cleaned = text
     .replace(/\s/g, '')
-    .replace(/\./g, '')
-    .replace(',', '.')
-    .replace(/[^\d.-]/g, '');
+    .replace(/[Rr]\$/g, '')
+    .replace(/[^\d,.-]/g, '');
+
+  if (!cleaned) return 0;
+
+  const hasComma = cleaned.includes(',');
+  const hasDot = cleaned.includes('.');
+
+  let normalized = cleaned;
+
+  if (hasComma && hasDot) {
+    const lastComma = cleaned.lastIndexOf(',');
+    const lastDot = cleaned.lastIndexOf('.');
+
+    if (lastComma > lastDot) {
+      // Ex.: 1.234,56
+      normalized = cleaned.replace(/\./g, '').replace(',', '.');
+    } else {
+      // Ex.: 1,234.56
+      normalized = cleaned.replace(/,/g, '');
+    }
+  } else if (hasComma) {
+    // Ex.: 115,23
+    normalized = cleaned.replace(/\./g, '').replace(',', '.');
+  } else if (hasDot) {
+    // Ex.: 115.23
+    const parts = cleaned.split('.');
+
+    if (parts.length > 2) {
+      const decimalPart = parts.pop() ?? '0';
+      normalized = `${parts.join('')}.${decimalPart}`;
+    } else {
+      normalized = cleaned;
+    }
+  }
 
   const result = Number(normalized);
   return Number.isFinite(result) ? result : 0;

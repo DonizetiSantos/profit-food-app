@@ -4,7 +4,11 @@ import { detectPdvSource, PdvSource } from './pdvSourceDetector';
 import { parseSaiposClosing } from './parsers/saiposParser';
 import { parseTotvsChefClosing } from './parsers/totvsChefParser';
 import { parseGenericClosing } from './parsers/genericSpreadsheetParser';
-import { NormalizedPdvClosing, NormalizedPdvClosingBatch, PaymentSettlementRule } from '../types';
+import {
+  NormalizedPdvClosing,
+  NormalizedPdvClosingBatch,
+  PaymentSettlementRule,
+} from '../types';
 import { settlementService } from './settlementService';
 
 export interface PdvImportPreview {
@@ -53,7 +57,12 @@ const resolveBestRule = (
   const exactRule = candidateRules.find((rule) => {
     const ruleBrand = normalizeText(rule.card_brand);
     const ruleAcquirer = normalizeText(rule.acquirer_name);
-    return !!ruleBrand && !!ruleAcquirer && ruleBrand === normalizedBrand && ruleAcquirer === normalizedAcquirer;
+    return (
+      !!ruleBrand &&
+      !!ruleAcquirer &&
+      ruleBrand === normalizedBrand &&
+      ruleAcquirer === normalizedAcquirer
+    );
   });
   if (exactRule) return exactRule;
 
@@ -71,7 +80,10 @@ const resolveBestRule = (
   });
   if (acquirerRule) return acquirerRule;
 
-  const genericRule = candidateRules.find((rule) => !normalizeText(rule.card_brand) && !normalizeText(rule.acquirer_name));
+  const genericRule = candidateRules.find(
+    (rule) =>
+      !normalizeText(rule.card_brand) && !normalizeText(rule.acquirer_name)
+  );
   if (genericRule) return genericRule;
 
   return candidateRules[0] || null;
@@ -99,13 +111,14 @@ const applyRuleToRow = (
       defaultBankId: caixaEmpresaId || row.defaultBankId || null,
       dueDate: row.closingDate,
       liquidationDate: row.closingDate,
-      shouldGenerateFeePosting: currentFeeAmount > 0
+      shouldGenerateFeePosting: currentFeeAmount > 0,
     };
   }
 
   if (!rule) {
     const currentFeeAmount = Number(row.feeAmount ?? 0);
-    const fallbackStatus = row.mappedStatus || 'PROVISIONADO';
+    const fallbackStatus =
+      (row.mappedStatus as 'LIQUIDADO' | 'PROVISIONADO') || 'PROVISIONADO';
     const fallbackDueDate = row.dueDate || row.closingDate;
     const fallbackLiquidationDate =
       fallbackStatus === 'LIQUIDADO'
@@ -122,7 +135,7 @@ const applyRuleToRow = (
       mappedStatus: fallbackStatus,
       dueDate: fallbackDueDate,
       liquidationDate: fallbackLiquidationDate,
-      shouldGenerateFeePosting: currentFeeAmount > 0
+      shouldGenerateFeePosting: currentFeeAmount > 0,
     };
   }
 
@@ -134,7 +147,8 @@ const applyRuleToRow = (
   const settlementDays = Number(rule.settlement_days || 0);
   const receivesSameDay = !!rule.receives_same_day;
 
-  let mappedStatus: 'LIQUIDADO' | 'PROVISIONADO' = rule.default_status || 'PROVISIONADO';
+  let mappedStatus: 'LIQUIDADO' | 'PROVISIONADO' =
+    rule.default_status || 'PROVISIONADO';
   let dueDate = row.closingDate;
   let liquidationDate: string | null = null;
 
@@ -143,7 +157,7 @@ const applyRuleToRow = (
     dueDate = row.closingDate;
     liquidationDate = row.closingDate;
   } else {
-    const date = new Date(row.closingDate + 'T12:00:00');
+    const date = new Date(`${row.closingDate}T12:00:00`);
     date.setDate(date.getDate() + settlementDays);
     dueDate = date.toISOString().split('T')[0];
     liquidationDate = mappedStatus === 'LIQUIDADO' ? dueDate : null;
@@ -163,7 +177,7 @@ const applyRuleToRow = (
     netAmount,
     dueDate,
     liquidationDate,
-    shouldGenerateFeePosting: feeAmount > 0
+    shouldGenerateFeePosting: feeAmount > 0,
   };
 };
 
@@ -202,16 +216,27 @@ const recalculateRowsFromFinalMapping = (
   });
 };
 
-const recalculateBatchTotals = (batch: NormalizedPdvClosingBatch): NormalizedPdvClosingBatch => {
-  const totalGrossAmount = batch.rows.reduce((acc, row) => acc + Number(row.grossAmount || 0), 0);
-  const totalFeeAmount = batch.rows.reduce((acc, row) => acc + Number(row.feeAmount || 0), 0);
-  const totalNetAmount = batch.rows.reduce((acc, row) => acc + Number(row.netAmount || 0), 0);
+const recalculateBatchTotals = (
+  batch: NormalizedPdvClosingBatch
+): NormalizedPdvClosingBatch => {
+  const totalGrossAmount = batch.rows.reduce(
+    (acc, row) => acc + Number(row.grossAmount || 0),
+    0
+  );
+  const totalFeeAmount = batch.rows.reduce(
+    (acc, row) => acc + Number(row.feeAmount || 0),
+    0
+  );
+  const totalNetAmount = batch.rows.reduce(
+    (acc, row) => acc + Number(row.netAmount || 0),
+    0
+  );
 
   return {
     ...batch,
     totalGrossAmount,
     totalFeeAmount,
-    totalNetAmount
+    totalNetAmount,
   };
 };
 
@@ -257,7 +282,9 @@ export const pdvImportService = {
       default:
         batch = await parseGenericClosing(file, companyId, today, settlementRules);
         if (batch.rows.length === 0) {
-          throw new Error('Não foi possível reconhecer a estrutura do arquivo. Verifique se o arquivo contém colunas de forma de pagamento e valor.');
+          throw new Error(
+            'Não foi possível reconhecer a estrutura do arquivo. Verifique se o arquivo contém colunas de forma de pagamento e valor.'
+          );
         }
     }
 
@@ -282,20 +309,23 @@ export const pdvImportService = {
             ...row,
             paymentMethodId: row.paymentMethodId || mapping.payment_method_id,
             mappedStatus: row.mappedStatus || mapping.default_status,
-            defaultBankId: row.defaultBankId || mapping.default_bank_id
+            defaultBankId: row.defaultBankId || mapping.default_bank_id,
           };
         }
         return row;
       });
     }
 
-    batch.rows = recalculateRowsFromFinalMapping(batch.rows, settlementRules);
+    batch.rows = recalculateRowsFromFinalMapping(
+      batch.rows,
+      settlementRules
+    );
     batch = recalculateBatchTotals(batch);
 
     return {
       source,
       batch,
-      fileHash
+      fileHash,
     };
   },
 
@@ -307,8 +337,9 @@ export const pdvImportService = {
     let { batch, fileHash, source } = preview;
     const warnings: string[] = [];
 
-    const accountId = await settlementService.resolveCompanyRevenueAccount(companyId);
-    const feeAccountId = await settlementService.resolveCompanyFeeAccount(companyId);
+    const accountId = await settlementService.resolveCompanyRevenueAccount(
+      companyId
+    );
 
     if (!accountId) {
       throw new Error('Não foi possível resolver a conta de Vendas Gerais.');
@@ -322,23 +353,25 @@ export const pdvImportService = {
 
     const settlementRules = (rules || []) as PaymentSettlementRule[];
 
-    batch.rows = recalculateRowsFromFinalMapping(batch.rows, settlementRules, caixaEmpresaId);
+    batch.rows = recalculateRowsFromFinalMapping(
+      batch.rows,
+      settlementRules,
+      caixaEmpresaId
+    );
     batch = recalculateBatchTotals(batch);
 
     const importId = crypto.randomUUID();
-    const { error: importError } = await supabase
-      .from('pdv_imports')
-      .insert({
-        id: importId,
-        company_id: companyId,
-        source: source.toUpperCase(),
-        file_hash: fileHash,
-        file_name: `Importação ${source} ${batch.closingDate}`,
-        from_date: batch.closingDate,
-        to_date: batch.closingDate,
-        total_rows: batch.rows.length,
-        status: 'IMPORTED'
-      });
+    const { error: importError } = await supabase.from('pdv_imports').insert({
+      id: importId,
+      company_id: companyId,
+      source: source.toUpperCase(),
+      file_hash: fileHash,
+      file_name: `Importação ${source} ${batch.closingDate}`,
+      from_date: batch.closingDate,
+      to_date: batch.closingDate,
+      total_rows: batch.rows.length,
+      status: 'IMPORTED',
+    });
 
     if (importError) throw importError;
 
@@ -359,7 +392,7 @@ export const pdvImportService = {
         }
       }
 
-      const finalStatus =
+      const finalStatus: 'LIQUIDADO' | 'PROVISIONADO' =
         row.paymentMethodType === 'DINHEIRO'
           ? 'LIQUIDADO'
           : (row.mappedStatus || 'PROVISIONADO');
@@ -388,26 +421,39 @@ export const pdvImportService = {
           observations: `Venda PDV (${source}) - ${row.rawLabel}`,
           payment_method_id: row.paymentMethodId,
           amount: row.grossAmount,
-          bank_id: bankId || null
+          bank_id: bankId || null,
         });
       }
 
-      if (row.shouldGenerateFeePosting && feeAccountId) {
-        postings.push({
-          id: crypto.randomUUID(),
-          company_id: companyId,
-          status: finalStatus,
-          competence_date: row.closingDate,
-          occurrence_date: row.closingDate,
-          due_date: finalDueDate,
-          liquidation_date: finalLiquidationDate,
-          group: 'DESPESAS',
-          account_id: feeAccountId,
-          observations: `Taxa PDV (${source}) - ${row.rawLabel}`,
-          payment_method_id: row.paymentMethodId,
-          amount: row.feeAmount,
-          bank_id: bankId || null
-        });
+      if (row.shouldGenerateFeePosting) {
+        const feeAccountId =
+          await settlementService.resolveCompanyFeeAccountByPaymentMethod(
+            companyId,
+            row.paymentMethodId || null,
+            row.rawLabel
+          );
+
+        if (feeAccountId) {
+          postings.push({
+            id: crypto.randomUUID(),
+            company_id: companyId,
+            status: finalStatus,
+            competence_date: row.closingDate,
+            occurrence_date: row.closingDate,
+            due_date: finalDueDate,
+            liquidation_date: finalLiquidationDate,
+            group: 'DESPESAS',
+            account_id: feeAccountId,
+            observations: `Taxa PDV (${source}) - ${row.rawLabel}`,
+            payment_method_id: row.paymentMethodId,
+            amount: row.feeAmount,
+            bank_id: bankId || null,
+          });
+        } else {
+          warnings.push(
+            `Conta de taxa não encontrada para o meio "${row.rawLabel}". A taxa não foi lançada separadamente.`
+          );
+        }
       }
 
       importItems.push({
@@ -416,7 +462,7 @@ export const pdvImportService = {
         posting_id: postingId,
         raw_label: row.rawLabel,
         amount: row.grossAmount,
-        day: row.closingDate
+        day: row.closingDate,
       });
 
       if (!seenLabels.has(row.rawLabel)) {
@@ -425,8 +471,14 @@ export const pdvImportService = {
           source: source.toUpperCase(),
           raw_label: row.rawLabel,
           payment_method_id: row.paymentMethodId,
-          default_status: row.paymentMethodType === 'DINHEIRO' ? 'LIQUIDADO' : (row.mappedStatus || 'PROVISIONADO'),
-          default_bank_id: row.paymentMethodType === 'DINHEIRO' ? (caixaEmpresaId || row.defaultBankId || null) : (row.defaultBankId || null)
+          default_status:
+            row.paymentMethodType === 'DINHEIRO'
+              ? 'LIQUIDADO'
+              : (row.mappedStatus || 'PROVISIONADO'),
+          default_bank_id:
+            row.paymentMethodType === 'DINHEIRO'
+              ? (caixaEmpresaId || row.defaultBankId || null)
+              : (row.defaultBankId || null),
         });
         seenLabels.add(row.rawLabel);
       }
@@ -435,11 +487,15 @@ export const pdvImportService = {
     if (mappingsToUpsert.length > 0) {
       await supabase
         .from('pdv_payment_mapping')
-        .upsert(mappingsToUpsert, { onConflict: 'company_id, source, raw_label' });
+        .upsert(mappingsToUpsert, {
+          onConflict: 'company_id, source, raw_label',
+        });
     }
 
     if (postings.length > 0) {
-      const { error: postError } = await supabase.from('postings').insert(postings);
+      const { error: postError } = await supabase
+        .from('postings')
+        .insert(postings);
       if (postError) throw postError;
     }
 
@@ -448,5 +504,5 @@ export const pdvImportService = {
     }
 
     return { warnings };
-  }
+  },
 };
