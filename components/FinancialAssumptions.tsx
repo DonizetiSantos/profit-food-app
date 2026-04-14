@@ -79,6 +79,7 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
   const [cleaningLegacy, setCleaningLegacy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [unlockedInputs, setUnlockedInputs] = useState<Record<string, boolean>>({});
 
   const getMethodName = (rule: RuleRow) =>
     rule.payment_methods?.name ||
@@ -99,6 +100,16 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
       !!normalizeText(rule.acquirer_name) ||
       !!rule.isSpecificDraft
     );
+
+  const unlockInput = (key: string) => {
+    setUnlockedInputs((prev) => ({ ...prev, [key]: true }));
+  };
+
+  const lockInput = (key: string) => {
+    setUnlockedInputs((prev) => ({ ...prev, [key]: false }));
+  };
+
+  const isInputUnlocked = (key: string) => !!unlockedInputs[key];
 
   useEffect(() => {
     const loadData = async () => {
@@ -747,116 +758,129 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
                 </td>
               </tr>
             ) : (
-              cardSpecificRules.map((rule) => (
-                <tr key={rule.id} className="hover:bg-slate-800/20 transition-colors">
-                  <td className="px-6 py-4">
-                    <div className="flex flex-col gap-0.5 leading-tight">
-                      <span className="text-[11px] font-black text-slate-200 uppercase tracking-tight">{getMethodName(rule)}</span>
-                      <span className="text-[8px] font-black uppercase tracking-widest text-amber-400">Regra Específica</span>
-                    </div>
-                  </td>
+              cardSpecificRules.map((rule) => {
+                const brandInputKey = `${rule.id}-card_brand`;
+                const acquirerInputKey = `${rule.id}-acquirer_name`;
 
-                  <td className="px-3 py-4 text-center">
-                    <input
-                      type="text"
-                      value={rule.card_brand || ''}
-                      onChange={(e) => handleUpdateRule(rule.id, 'card_brand', e.target.value.toUpperCase())}
-                      placeholder="VISA"
-                      className="w-24 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center uppercase"
-                    />
-                  </td>
+                return (
+                  <tr key={rule.id} className="hover:bg-slate-800/20 transition-colors">
+                    <td className="px-6 py-4">
+                      <div className="flex flex-col gap-0.5 leading-tight">
+                        <span className="text-[11px] font-black text-slate-200 uppercase tracking-tight">{getMethodName(rule)}</span>
+                        <span className="text-[8px] font-black uppercase tracking-widest text-amber-400">Regra Específica</span>
+                      </div>
+                    </td>
 
-                  <td className="px-3 py-4 text-center">
-                    <input
-                      type="text"
-                      value={rule.acquirer_name || ''}
-                      onChange={(e) => handleUpdateRule(rule.id, 'acquirer_name', e.target.value.toUpperCase())}
-                      placeholder="STONE"
-                      className="w-28 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center uppercase"
-                    />
-                  </td>
+                    <td className="px-3 py-4 text-center">
+                      <input
+                        type="text"
+                        value={rule.card_brand || ''}
+                        onFocus={() => unlockInput(brandInputKey)}
+                        onBlur={() => lockInput(brandInputKey)}
+                        onChange={(e) => handleUpdateRule(rule.id, 'card_brand', e.target.value.toUpperCase())}
+                        autoComplete="off"
+                        readOnly={!isInputUnlocked(brandInputKey)}
+                        name={`card-brand-${rule.id}`}
+                        className="w-24 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center uppercase"
+                      />
+                    </td>
 
-                  <td className="px-3 py-4 text-center">
-                    <input
-                      type="number"
-                      value={rule.settlement_days}
-                      onChange={(e) => handleUpdateRule(rule.id, 'settlement_days', parseInt(e.target.value, 10) || 0)}
-                      className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
-                    />
-                  </td>
+                    <td className="px-3 py-4 text-center">
+                      <input
+                        type="text"
+                        value={rule.acquirer_name || ''}
+                        onFocus={() => unlockInput(acquirerInputKey)}
+                        onBlur={() => lockInput(acquirerInputKey)}
+                        onChange={(e) => handleUpdateRule(rule.id, 'acquirer_name', e.target.value.toUpperCase())}
+                        autoComplete="off"
+                        readOnly={!isInputUnlocked(acquirerInputKey)}
+                        name={`acquirer-name-${rule.id}`}
+                        className="w-28 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center uppercase"
+                      />
+                    </td>
 
-                  <td className="px-3 py-4 text-center">
-                    <div className="flex flex-col items-center gap-1">
-                      <button
-                        onClick={() => handleUpdateRule(rule.id, 'receives_same_day', !rule.receives_same_day)}
-                        className={`w-11 h-5 rounded-full p-0.5 transition-all duration-300 relative ${rule.receives_same_day ? 'bg-rose-600' : 'bg-slate-800'}`}
+                    <td className="px-3 py-4 text-center">
+                      <input
+                        type="number"
+                        value={rule.settlement_days}
+                        onChange={(e) => handleUpdateRule(rule.id, 'settlement_days', parseInt(e.target.value, 10) || 0)}
+                        className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
+                      />
+                    </td>
+
+                    <td className="px-3 py-4 text-center">
+                      <div className="flex flex-col items-center gap-1">
+                        <button
+                          onClick={() => handleUpdateRule(rule.id, 'receives_same_day', !rule.receives_same_day)}
+                          className={`w-11 h-5 rounded-full p-0.5 transition-all duration-300 relative ${rule.receives_same_day ? 'bg-rose-600' : 'bg-slate-800'}`}
+                        >
+                          <div className={`w-4 h-4 bg-white rounded-full shadow-md transition-all duration-300 ${rule.receives_same_day ? 'translate-x-6' : 'translate-x-0'}`}></div>
+                        </button>
+                        {rule.receives_same_day && <span className="text-[7px] font-black text-rose-500 uppercase tracking-tighter">D+0</span>}
+                      </div>
+                    </td>
+
+                    <td className="px-3 py-4 text-center">
+                      <select
+                        value={rule.default_status}
+                        onChange={(e) => handleUpdateRule(rule.id, 'default_status', e.target.value)}
+                        className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-[9px] font-black text-slate-300 outline-none focus:border-rose-500 transition-all uppercase tracking-wider w-[132px]"
                       >
-                        <div className={`w-4 h-4 bg-white rounded-full shadow-md transition-all duration-300 ${rule.receives_same_day ? 'translate-x-6' : 'translate-x-0'}`}></div>
-                      </button>
-                      {rule.receives_same_day && <span className="text-[7px] font-black text-rose-500 uppercase tracking-tighter">D+0</span>}
-                    </div>
-                  </td>
+                        <option value="LIQUIDADO">LIQUIDADO</option>
+                        <option value="PROVISIONADO">PROVISIONADO</option>
+                      </select>
+                    </td>
 
-                  <td className="px-3 py-4 text-center">
-                    <select
-                      value={rule.default_status}
-                      onChange={(e) => handleUpdateRule(rule.id, 'default_status', e.target.value)}
-                      className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-[9px] font-black text-slate-300 outline-none focus:border-rose-500 transition-all uppercase tracking-wider w-[132px]"
-                    >
-                      <option value="LIQUIDADO">LIQUIDADO</option>
-                      <option value="PROVISIONADO">PROVISIONADO</option>
-                    </select>
-                  </td>
+                    <td className="px-3 py-4 text-center">
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={rule.fee_percent}
+                        onChange={(e) => handleUpdateRule(rule.id, 'fee_percent', parseFloat(e.target.value) || 0)}
+                        className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
+                      />
+                    </td>
 
-                  <td className="px-3 py-4 text-center">
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={rule.fee_percent}
-                      onChange={(e) => handleUpdateRule(rule.id, 'fee_percent', parseFloat(e.target.value) || 0)}
-                      className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
-                    />
-                  </td>
+                    <td className="px-3 py-4 text-center">
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={rule.fee_fixed}
+                        onChange={(e) => handleUpdateRule(rule.id, 'fee_fixed', parseFloat(e.target.value) || 0)}
+                        className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
+                      />
+                    </td>
 
-                  <td className="px-3 py-4 text-center">
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={rule.fee_fixed}
-                      onChange={(e) => handleUpdateRule(rule.id, 'fee_fixed', parseFloat(e.target.value) || 0)}
-                      className="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center"
-                    />
-                  </td>
+                    <td className="px-4 py-4">
+                      <input
+                        type="text"
+                        value={rule.notes || ''}
+                        onChange={(e) => handleUpdateRule(rule.id, 'notes', e.target.value)}
+                        placeholder="Notas..."
+                        className="w-full min-w-[150px] bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[11px] font-medium text-slate-400 outline-none focus:border-rose-500 transition-all"
+                      />
+                    </td>
 
-                  <td className="px-4 py-4">
-                    <input
-                      type="text"
-                      value={rule.notes || ''}
-                      onChange={(e) => handleUpdateRule(rule.id, 'notes', e.target.value)}
-                      placeholder="Notas..."
-                      className="w-full min-w-[150px] bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[11px] font-medium text-slate-400 outline-none focus:border-rose-500 transition-all"
-                    />
-                  </td>
-
-                  <td className="px-4 py-4 text-center">
-                    {rule.isNew ? (
-                      <button
-                        onClick={() => handleRemoveUnsavedRule(rule.id)}
-                        className="px-2.5 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest bg-slate-950 hover:bg-slate-900 text-rose-400 transition-all whitespace-nowrap border border-slate-800"
-                      >
-                        Remover
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => handleDeleteSavedRule(rule.id)}
-                        className="px-2.5 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest bg-slate-950 hover:bg-slate-900 text-rose-400 transition-all whitespace-nowrap border border-slate-800"
-                      >
-                        Excluir
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))
+                    <td className="px-4 py-4 text-center">
+                      {rule.isNew ? (
+                        <button
+                          onClick={() => handleRemoveUnsavedRule(rule.id)}
+                          className="px-2.5 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest bg-slate-950 hover:bg-slate-900 text-rose-400 transition-all whitespace-nowrap border border-slate-800"
+                        >
+                          Remover
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleDeleteSavedRule(rule.id)}
+                          className="px-2.5 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest bg-slate-950 hover:bg-slate-900 text-rose-400 transition-all whitespace-nowrap border border-slate-800"
+                        >
+                          Excluir
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
