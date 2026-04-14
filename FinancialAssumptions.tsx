@@ -761,6 +761,8 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
                       type="text"
                       value={rule.card_brand || ''}
                       onChange={(e) => handleUpdateRule(rule.id, 'card_brand', e.target.value.toUpperCase())}
+                      autoComplete="off"
+                      name={`card-brand-${rule.id}`}
                       className="w-24 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center uppercase"
                     />
                   </td>
@@ -770,6 +772,8 @@ export const FinancialAssumptions: React.FC<Props> = ({ banks }) => {
                       type="text"
                       value={rule.acquirer_name || ''}
                       onChange={(e) => handleUpdateRule(rule.id, 'acquirer_name', e.target.value.toUpperCase())}
+                      autoComplete="off"
+                      name={`acquirer-name-${rule.id}`}
                       className="w-28 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-[11px] font-bold text-slate-300 outline-none focus:border-rose-500 transition-all text-center uppercase"
                     />
                   </td>
