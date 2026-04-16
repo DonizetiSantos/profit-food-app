@@ -84,6 +84,7 @@ export interface FinancialPosting {
   liquidationDate?: string;
   bankId?: string;
   amount: number;
+  invoiceNumber?: string;
 }
 
 export interface Transaction {

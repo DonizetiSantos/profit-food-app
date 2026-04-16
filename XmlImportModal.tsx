@@ -221,7 +221,8 @@ export const XmlImportModal: React.FC<Props> = ({
         entityId,
         liquidationDate: status === 'LIQUIDADO' ? liquidationDate : undefined,
         bankId: status === 'LIQUIDADO' ? selectedBank : undefined,
-        amount: totalAmount
+        amount: totalAmount,
+        invoiceNumber: nfeData.nfeNumber
       }));
 
       onAddPostings(postings);
@@ -234,6 +235,7 @@ export const XmlImportModal: React.FC<Props> = ({
           file_name: file?.name || 'unknown',
           supplier_cnpj: nfeData.supplierCnpj,
           invoice_key: nfeData.nfeKey,
+          invoice_number: nfeData.nfeNumber,
           status: 'imported'
         });
       }
@@ -248,6 +250,7 @@ export const XmlImportModal: React.FC<Props> = ({
           file_name: file?.name || 'unknown',
           supplier_cnpj: nfeData.supplierCnpj,
           invoice_key: nfeData.nfeKey,
+          invoice_number: nfeData.nfeNumber,
           status: 'error',
           error_message: err.message || String(err)
         });
@@ -301,7 +304,6 @@ export const XmlImportModal: React.FC<Props> = ({
             </div>
           ) : (
             <>
-              {/* NF-e Summary */}
               <section className="grid grid-cols-1 md:grid-cols-4 gap-6 bg-slate-950/50 p-6 rounded-3xl border border-slate-800">
                 <div>
                   <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Fornecedor</p>
@@ -331,7 +333,6 @@ export const XmlImportModal: React.FC<Props> = ({
                 </div>
               </section>
 
-              {/* Items Mapping */}
               <section>
                 <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-6 flex items-center gap-3">
                   <span className="w-2 h-2 rounded-full bg-blue-500"></span>
@@ -374,7 +375,6 @@ export const XmlImportModal: React.FC<Props> = ({
                 </div>
               </section>
 
-              {/* Launch Settings */}
               <section className="bg-slate-950/30 p-8 rounded-[2rem] border border-slate-800 space-y-8">
                 <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] flex items-center gap-3">
                   <span className="w-2 h-2 rounded-full bg-purple-500"></span>
