@@ -1,8 +1,9 @@
-
 import React, { useState, useMemo, useEffect } from 'react';
 import { MainGroup, Account, Bank, PaymentMethod, Entity, FinancialPosting, XmlMapping } from '../types';
 import { XmlImportModal } from './XmlImportModal';
 import { PdvImportModal } from './PdvImportModal';
+import { supabase } from '../src/lib/supabase';
+import { useActiveCompany } from '../src/contexts/CompanyContext';
 
 interface Props {
   accounts: Account[];
@@ -19,11 +20,12 @@ interface Props {
   onRefresh?: () => void;
 }
 
-export const FinancialPostings: React.FC<Props> = ({ 
+export const FinancialPostings: React.FC<Props> = ({
   accounts, banks, paymentMethods, entities, onAddPosting, editingPosting, onCancelEdit,
   xmlMappings, onSaveXmlMappings, onAddMultiplePostings, onAddFavored, onRefresh
 }) => {
-  // Helper para obter o primeiro dia do mês atual
+  const { activeCompany } = useActiveCompany();
+
   const getFirstDayOfMonth = () => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
@@ -38,6 +40,7 @@ export const FinancialPostings: React.FC<Props> = ({
   const [liquidationDate, setLiquidationDate] = useState(getToday());
   const [selectedGroup, setSelectedGroup] = useState<MainGroup>(MainGroup.RECEITAS);
   const [selectedAccount, setSelectedAccount] = useState('');
+  const [invoiceNumber, setInvoiceNumber] = useState('');
   const [observations, setObservations] = useState('');
   const [selectedMethod, setSelectedMethod] = useState('');
   const [selectedEntity, setSelectedEntity] = useState('');
@@ -46,7 +49,9 @@ export const FinancialPostings: React.FC<Props> = ({
   const [isXmlModalOpen, setIsXmlModalOpen] = useState(false);
   const [isPdvModalOpen, setIsPdvModalOpen] = useState(false);
 
-  // Sincroniza o estado do formulário com o registro sendo editado
+  const [invoiceDuplicateMessage, setInvoiceDuplicateMessage] = useState('');
+  const [checkingInvoiceDuplicate, setCheckingInvoiceDuplicate] = useState(false);
+
   useEffect(() => {
     if (editingPosting) {
       setActiveTab(editingPosting.status);
@@ -56,6 +61,7 @@ export const FinancialPostings: React.FC<Props> = ({
       setLiquidationDate(editingPosting.liquidationDate || getToday());
       setSelectedGroup(editingPosting.group);
       setSelectedAccount(editingPosting.accountId);
+      setInvoiceNumber(editingPosting.invoiceNumber || '');
       setObservations(editingPosting.observations);
       setSelectedMethod(editingPosting.paymentMethodId);
       setSelectedEntity(editingPosting.entityId);
@@ -66,17 +72,80 @@ export const FinancialPostings: React.FC<Props> = ({
     }
   }, [editingPosting]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const checkDuplicateInvoice = async () => {
+      const trimmedInvoice = invoiceNumber.trim();
+
+      if (
+        !activeCompany ||
+        selectedGroup !== MainGroup.DESPESAS ||
+        !selectedEntity ||
+        !trimmedInvoice
+      ) {
+        setInvoiceDuplicateMessage('');
+        setCheckingInvoiceDuplicate(false);
+        return;
+      }
+
+      setCheckingInvoiceDuplicate(true);
+
+      let query = supabase
+        .from('postings')
+        .select('id')
+        .eq('company_id', activeCompany.id)
+        .eq('entity_id', selectedEntity)
+        .eq('invoice_number', trimmedInvoice)
+        .limit(1);
+
+      if (editingPosting?.id) {
+        query = query.neq('id', editingPosting.id);
+      }
+
+      const { data, error } = await query;
+
+      if (cancelled) return;
+
+      if (error) {
+        setInvoiceDuplicateMessage('Não foi possível validar a duplicidade da NF agora.');
+        setCheckingInvoiceDuplicate(false);
+        return;
+      }
+
+      if (data && data.length > 0) {
+        setInvoiceDuplicateMessage(`Já existe um lançamento para este fornecedor com a NF ${trimmedInvoice}.`);
+      } else {
+        setInvoiceDuplicateMessage('');
+      }
+
+      setCheckingInvoiceDuplicate(false);
+    };
+
+    const timer = window.setTimeout(() => {
+      void checkDuplicateInvoice();
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [activeCompany, selectedGroup, selectedEntity, invoiceNumber, editingPosting]);
+
   const resetForm = () => {
     setCompetenceDate(getFirstDayOfMonth());
     setOccurrenceDate(getToday());
     setDueDate('');
     setLiquidationDate(getToday());
     setSelectedAccount('');
+    setInvoiceNumber('');
     setObservations('');
     setSelectedMethod('');
     setSelectedEntity('');
     setSelectedBank('');
     setAmount('');
+    setInvoiceDuplicateMessage('');
+    setCheckingInvoiceDuplicate(false);
   };
 
   const filteredAccounts = useMemo(
@@ -101,17 +170,21 @@ export const FinancialPostings: React.FC<Props> = ({
     [banks]
   );
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const hasDuplicateInvoice =
+    selectedGroup === MainGroup.DESPESAS &&
+    !!selectedEntity &&
+    !!invoiceNumber.trim() &&
+    !!invoiceDuplicateMessage &&
+    !invoiceDuplicateMessage.startsWith('Não foi possível validar');
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Regras de Exigência:
-    // 1. Valor e Conta do Plano sempre obrigatórios
     if (!amount || !selectedAccount) {
       alert("Por favor, preencha o valor e selecione a conta do plano.");
       return;
     }
 
-    // 2. Regras para LIQUIDADO: Exige Operação, Entidade e Banco (Exceto para ESTOQUE)
     if (activeTab === 'LIQUIDADO' && selectedGroup !== MainGroup.ESTOQUE) {
       if (!selectedMethod || !selectedEntity || !selectedBank) {
         alert("Para registros liquidados, é obrigatório informar Operação, Entidade e Banco.");
@@ -119,36 +192,62 @@ export const FinancialPostings: React.FC<Props> = ({
       }
     }
 
-    // 3. Regras para PROVISIONADO:
     if (activeTab === 'PROVISIONADO') {
-      // Receita Provisionada: Não exige vencimento, operação nem entidade.
-      // Despesa Provisionada: Exige vencimento. Não exige operação nem entidade.
       if (selectedGroup === MainGroup.DESPESAS && !dueDate) {
         alert("Para despesas provisionadas, a data de vencimento é obrigatória.");
         return;
       }
     }
 
+    if (
+      activeCompany &&
+      selectedGroup === MainGroup.DESPESAS &&
+      selectedEntity &&
+      invoiceNumber.trim()
+    ) {
+      let query = supabase
+        .from('postings')
+        .select('id')
+        .eq('company_id', activeCompany.id)
+        .eq('entity_id', selectedEntity)
+        .eq('invoice_number', invoiceNumber.trim())
+        .limit(1);
+
+      if (editingPosting?.id) {
+        query = query.neq('id', editingPosting.id);
+      }
+
+      const { data, error } = await query;
+
+      if (error) {
+        alert("Erro ao validar duplicidade da nota fiscal.");
+        return;
+      }
+
+      if (data && data.length > 0) {
+        alert(`Já existe um lançamento para este fornecedor com a NF ${invoiceNumber.trim()}. Verifique antes de lançar manualmente.`);
+        return;
+      }
+    }
+
     onAddPosting({
-      status: activeTab, 
-      competenceDate, 
+      status: activeTab,
+      competenceDate,
       occurrenceDate,
-      // Se for provisionado, usa a data de vencimento preenchida. 
-      // Não assume mais a data do fato gerador (occurrenceDate) caso esteja vazio.
       dueDate: activeTab === 'PROVISIONADO' ? dueDate : '',
-      group: selectedGroup, 
-      accountId: selectedAccount, 
+      group: selectedGroup,
+      accountId: selectedAccount,
+      invoiceNumber: invoiceNumber.trim(),
       observations,
-      paymentMethodId: selectedMethod, 
+      paymentMethodId: selectedMethod,
       entityId: selectedEntity,
       liquidationDate: activeTab === 'LIQUIDADO' ? liquidationDate : undefined,
       bankId: activeTab === 'LIQUIDADO' ? selectedBank : undefined,
       amount: parseFloat(amount)
     });
-    
+
     alert(editingPosting ? "Lançamento atualizado!" : "Lançamento realizado!");
-    
-    // Volta para o início do formulário (reset total)
+
     resetForm();
     if (editingPosting && onCancelEdit) {
       onCancelEdit();
@@ -166,10 +265,10 @@ export const FinancialPostings: React.FC<Props> = ({
             {editingPosting ? 'Alterando um registro existente no extrato.' : 'Gestão de caixa e previsibilidade financeira.'}
           </p>
         </div>
-        
+
         <div className="flex items-center gap-4">
           {editingPosting && (
-            <button 
+            <button
               onClick={onCancelEdit}
               className="px-4 py-2 text-[10px] font-black bg-slate-800 text-slate-400 rounded-xl hover:text-white transition-all uppercase tracking-widest border border-slate-700"
             >
@@ -177,14 +276,14 @@ export const FinancialPostings: React.FC<Props> = ({
             </button>
           )}
           <div className="flex bg-slate-900 p-1.5 rounded-2xl border border-slate-800 shadow-inner">
-            <button 
+            <button
               type="button"
               onClick={() => setActiveTab('LIQUIDADO')}
               className={`px-6 py-2.5 rounded-xl text-xs font-black tracking-widest transition-all ${activeTab === 'LIQUIDADO' ? 'bg-slate-800 text-rose-500 shadow-xl' : 'text-slate-500 hover:text-slate-400'}`}
             >
               LIQUIDADOS
             </button>
-            <button 
+            <button
               type="button"
               onClick={() => setActiveTab('PROVISIONADO')}
               className={`px-6 py-2.5 rounded-xl text-xs font-black tracking-widest transition-all ${activeTab === 'PROVISIONADO' ? 'bg-slate-800 text-orange-500 shadow-xl' : 'text-slate-500 hover:text-slate-400'}`}
@@ -197,14 +296,14 @@ export const FinancialPostings: React.FC<Props> = ({
 
       <form onSubmit={handleSubmit} className="bg-slate-900 rounded-[2rem] shadow-2xl border border-slate-800 overflow-hidden">
         <div className={`h-2 ${activeTab === 'LIQUIDADO' ? 'bg-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.3)]' : 'bg-orange-500 shadow-[0_0_15px_rgba(249,115,22,0.3)]'}`}></div>
-        
+
         <div className="p-8 lg:p-12 space-y-10">
           <section>
             <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-6 flex items-center gap-3">
               <span className="w-2 h-2 rounded-full bg-blue-500"></span>
               Prazos e Competência
             </h3>
-            <div className={`grid grid-cols-1 ${activeTab === 'PROVISIONADO' ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-8`}>
+            <div className={`grid grid-cols-1 ${activeTab === 'PROVISIONADO' ? 'md:grid-cols-4' : 'md:grid-cols-3'} gap-8`}>
               <div className="flex flex-col gap-2">
                 <label className="text-xs font-bold text-slate-400 ml-1">Emissão (Competência)</label>
                 <input type="date" value={competenceDate} onChange={e => setCompetenceDate(e.target.value)} className="form-input-dark" required />
@@ -212,6 +311,23 @@ export const FinancialPostings: React.FC<Props> = ({
               <div className="flex flex-col gap-2">
                 <label className="text-xs font-bold text-slate-400 ml-1">Fato Gerador (Ocorrência)</label>
                 <input type="date" value={occurrenceDate} onChange={e => setOccurrenceDate(e.target.value)} className="form-input-dark" required />
+              </div>
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-bold text-slate-400 ml-1">Número da Nota Fiscal</label>
+                <input
+                  type="text"
+                  value={invoiceNumber}
+                  onChange={e => setInvoiceNumber(e.target.value)}
+                  className={`form-input-dark ${
+                    hasDuplicateInvoice ? 'border-amber-500/70 focus:border-amber-500' : ''
+                  }`}
+                  placeholder="Ex.: 1234"
+                />
+                {checkingInvoiceDuplicate && (
+                  <p className="text-[11px] font-bold text-slate-500 ml-1">
+                    Verificando NF...
+                  </p>
+                )}
               </div>
               {activeTab === 'PROVISIONADO' && (
                 <div className="flex flex-col gap-2">
@@ -227,7 +343,7 @@ export const FinancialPostings: React.FC<Props> = ({
               <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
               Classificação
             </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
               <div className="flex flex-col gap-2">
                 <label className="text-xs font-bold text-slate-400 ml-1">Natureza</label>
                 <div className="flex bg-slate-950 p-1.5 rounded-xl border border-slate-800 gap-1.5">
@@ -242,7 +358,7 @@ export const FinancialPostings: React.FC<Props> = ({
                   ))}
                 </div>
                 {selectedGroup === MainGroup.DESPESAS && !editingPosting && (
-                  <button 
+                  <button
                     type="button"
                     onClick={() => setIsXmlModalOpen(true)}
                     className="mt-2 flex items-center justify-center gap-2 py-2.5 bg-slate-800 hover:bg-slate-700 text-rose-500 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border border-slate-700 shadow-lg"
@@ -252,7 +368,7 @@ export const FinancialPostings: React.FC<Props> = ({
                   </button>
                 )}
                 {selectedGroup === MainGroup.RECEITAS && !editingPosting && (
-                  <button 
+                  <button
                     type="button"
                     onClick={() => setIsPdvModalOpen(true)}
                     className="mt-2 flex items-center justify-center gap-2 py-2.5 bg-slate-800 hover:bg-slate-700 text-emerald-500 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border border-slate-700 shadow-lg"
@@ -262,12 +378,43 @@ export const FinancialPostings: React.FC<Props> = ({
                   </button>
                 )}
               </div>
-              <div className="flex flex-col gap-2">
-                <label className="text-xs font-bold text-slate-400 ml-1">Conta do Plano</label>
-                <select value={selectedAccount} onChange={e => setSelectedAccount(e.target.value)} className="form-input-dark" required>
-                  <option value="">Selecione...</option>
-                  {filteredAccounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
-                </select>
+
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-bold text-slate-400 ml-1">Conta do Plano</label>
+                  <select value={selectedAccount} onChange={e => setSelectedAccount(e.target.value)} className="form-input-dark" required>
+                    <option value="">Selecione...</option>
+                    {filteredAccounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
+                  </select>
+                </div>
+
+                <div className="min-h-[128px]">
+                  {!checkingInvoiceDuplicate && invoiceDuplicateMessage && (
+                    <div className={`rounded-2xl border px-5 py-4 shadow-lg ${
+                      hasDuplicateInvoice
+                        ? 'bg-amber-500/10 border-amber-500/30'
+                        : 'bg-slate-950/60 border-slate-700'
+                    }`}>
+                      <div className="flex items-start gap-3">
+                        <div className={`mt-0.5 w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                          hasDuplicateInvoice ? 'bg-amber-400' : 'bg-slate-500'
+                        }`}></div>
+                        <div className="space-y-1">
+                          <p className={`text-[11px] font-black uppercase tracking-[0.18em] ${
+                            hasDuplicateInvoice ? 'text-amber-400' : 'text-slate-400'
+                          }`}>
+                            Atenção
+                          </p>
+                          <p className={`text-sm font-bold leading-relaxed ${
+                            hasDuplicateInvoice ? 'text-amber-200' : 'text-slate-300'
+                          }`}>
+                            {invoiceDuplicateMessage}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </section>
@@ -294,10 +441,14 @@ export const FinancialPostings: React.FC<Props> = ({
               </div>
               <div className="flex flex-col gap-2">
                 <label className="text-xs font-bold text-slate-400 ml-1">Valor do Lançamento</label>
-                <input 
-                  type="number" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0,00"
+                <input
+                  type="number"
+                  step="0.01"
+                  value={amount}
+                  onChange={e => setAmount(e.target.value)}
+                  placeholder="0,00"
                   className={`form-input-dark text-xl font-black ${selectedGroup === MainGroup.RECEITAS ? 'text-emerald-400' : 'text-rose-400'}`}
-                  required 
+                  required
                 />
               </div>
             </div>
@@ -324,24 +475,28 @@ export const FinancialPostings: React.FC<Props> = ({
 
           <div className="flex flex-col gap-2">
             <label className="text-xs font-bold text-slate-400 ml-1">Detalhes Adicionais</label>
-            <textarea 
-              value={observations} onChange={e => setObservations(e.target.value)}
+            <textarea
+              value={observations}
+              onChange={e => setObservations(e.target.value)}
               className="form-input-dark min-h-[100px] resize-none"
               placeholder="Notas sobre o lançamento..."
             />
           </div>
 
-          <button 
-            type="submit" 
-            className={`w-full py-5 rounded-2xl text-white font-black text-lg shadow-2xl hover:brightness-110 active:scale-[0.99] transition-all uppercase tracking-widest
-              ${activeTab === 'LIQUIDADO' ? 'bg-rose-600 shadow-rose-950/50' : 'bg-orange-600 shadow-orange-950/50'}`}
+          <button
+            type="submit"
+            disabled={hasDuplicateInvoice || checkingInvoiceDuplicate}
+            className={`w-full py-5 rounded-2xl text-white font-black text-lg shadow-2xl active:scale-[0.99] transition-all uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed
+              ${activeTab === 'LIQUIDADO' ? 'bg-rose-600 shadow-rose-950/50 hover:brightness-110' : 'bg-orange-600 shadow-orange-950/50 hover:brightness-110'}`}
           >
-            {editingPosting ? 'Atualizar Registro' : `Confirmar Registro ${activeTab}`}
+            {checkingInvoiceDuplicate
+              ? 'Validando NF...'
+              : (editingPosting ? 'Atualizar Registro' : `Confirmar Registro ${activeTab}`)}
           </button>
         </div>
       </form>
-      
-      <XmlImportModal 
+
+      <XmlImportModal
         isOpen={isXmlModalOpen}
         onClose={() => setIsXmlModalOpen(false)}
         accounts={accounts}
@@ -354,7 +509,7 @@ export const FinancialPostings: React.FC<Props> = ({
         onAddEntity={onAddFavored}
       />
 
-      <PdvImportModal 
+      <PdvImportModal
         isOpen={isPdvModalOpen}
         onClose={() => setIsPdvModalOpen(false)}
         banks={banks}

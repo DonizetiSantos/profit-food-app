@@ -57,7 +57,8 @@ const mapToDb = (table: string, data: any, companyId: string) => {
       payment_method_id: data.paymentMethodId || null,
       entity_id: data.entityId || null,
       bank_id: data.bankId || null,
-      amount: data.amount
+      amount: data.amount,
+      invoice_number: data.invoiceNumber || null
     };
   }
   if (table === 'xml_item_mappings') {
@@ -182,7 +183,8 @@ export const datastore = {
         entityId: p.entity_id || '',
         liquidationDate: p.liquidation_date,
         bankId: p.bank_id,
-        amount: Number(p.amount)
+        amount: Number(p.amount),
+        invoiceNumber: p.invoice_number || ''
       })),
       xmlMappings: (xmlMappings || []).map(m => ({
         id: m.id,

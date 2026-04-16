@@ -1,10 +1,10 @@
-
 import { XmlItem } from '../types';
 
 export interface NfeData {
   supplierName: string;
   supplierCnpj: string;
   issueDate: string;
+  dueDate: string;
   nfeNumber: string;
   nfeKey: string;
   totalValue: number;
@@ -15,8 +15,14 @@ export const parseNfeXml = (xmlString: string): NfeData => {
   const parser = new DOMParser();
   const xmlDoc = parser.parseFromString(xmlString, "text/xml");
 
-  const getTagValue = (parent: Element | Document, tagName: string) => {
+  const getTagValue = (parent: Element | Document | undefined, tagName: string) => {
+    if (!parent) return '';
     return parent.getElementsByTagName(tagName)[0]?.textContent || '';
+  };
+
+  const extractDateOnly = (value: string) => {
+    if (!value) return '';
+    return value.includes('T') ? value.split('T')[0] : value;
   };
 
   // Emitente (Fornecedor)
@@ -26,11 +32,23 @@ export const parseNfeXml = (xmlString: string): NfeData => {
 
   // Dados da NF-e
   const ide = xmlDoc.getElementsByTagName("ide")[0];
-  const issueDate = getTagValue(ide, "dhEmi").split('T')[0] || getTagValue(ide, "dEmi");
+  const rawIssueDate = getTagValue(ide, "dhEmi") || getTagValue(ide, "dEmi");
+  const issueDate = extractDateOnly(rawIssueDate);
   const nfeNumber = getTagValue(ide, "nNF");
-  
+
   const infNFe = xmlDoc.getElementsByTagName("infNFe")[0];
   const nfeKey = infNFe?.getAttribute("Id")?.replace('NFe', '') || '';
+
+  // Vencimento
+  const cobr = xmlDoc.getElementsByTagName("cobr")[0];
+  const dup = xmlDoc.getElementsByTagName("dup")[0];
+
+  const rawDueDate =
+    getTagValue(dup, "dVenc") ||
+    getTagValue(cobr, "dVenc") ||
+    '';
+
+  const dueDate = extractDateOnly(rawDueDate);
 
   // Totais
   const total = xmlDoc.getElementsByTagName("total")[0];
@@ -43,7 +61,7 @@ export const parseNfeXml = (xmlString: string): NfeData => {
   for (let i = 0; i < detElements.length; i++) {
     const det = detElements[i];
     const prod = det.getElementsByTagName("prod")[0];
-    
+
     items.push({
       cProd: getTagValue(prod, "cProd"),
       xProd: getTagValue(prod, "xProd"),
@@ -59,6 +77,7 @@ export const parseNfeXml = (xmlString: string): NfeData => {
     supplierName,
     supplierCnpj,
     issueDate,
+    dueDate,
     nfeNumber,
     nfeKey,
     totalValue,
@@ -70,8 +89,8 @@ export const normalizeProductName = (name: string): string => {
   return name
     .toUpperCase()
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "") // Remove acentos
-    .replace(/[^\w\s]/gi, '') // Remove pontuação
-    .replace(/\s+/g, ' ') // Espaços múltiplos viram 1
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w\s]/gi, '')
+    .replace(/\s+/g, ' ')
     .trim();
 };

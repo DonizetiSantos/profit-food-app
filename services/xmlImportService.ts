@@ -1,4 +1,3 @@
-
 import { supabase } from '../src/lib/supabase';
 
 export interface XmlImportRecord {
@@ -8,6 +7,7 @@ export interface XmlImportRecord {
   file_name: string;
   supplier_cnpj: string;
   invoice_key: string;
+  invoice_number?: string;
   imported_at: string;
   status: 'imported' | 'error';
   error_message?: string;

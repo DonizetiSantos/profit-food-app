@@ -1,6 +1,5 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
-import { Account, Bank, PaymentMethod, Entity, FinancialPosting, MainGroup, XmlItem, XmlMapping } from '../types';
+import { Account, Bank, PaymentMethod, Entity, FinancialPosting, MainGroup, XmlMapping } from '../types';
 import { parseNfeXml, normalizeProductName, NfeData } from '../services/xmlParser';
 import { favoredService } from '../services/favoredService';
 import { useActiveCompany } from '../src/contexts/CompanyContext';
@@ -31,7 +30,7 @@ export const XmlImportModal: React.FC<Props> = ({
   const [saveNewMappings, setSaveNewMappings] = useState<Record<number, boolean>>({});
   const [selectedEntityId, setSelectedEntityId] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
-  
+
   // Settings for launch
   const [status, setStatus] = useState<'LIQUIDADO' | 'PROVISIONADO'>('PROVISIONADO');
   const [competenceDate, setCompetenceDate] = useState('');
@@ -67,32 +66,32 @@ export const XmlImportModal: React.FC<Props> = ({
     if (nfeData) {
       setCompetenceDate(nfeData.issueDate);
       setOccurrenceDate(nfeData.issueDate);
-      setDueDate(nfeData.issueDate);
+      setDueDate(nfeData.dueDate || nfeData.issueDate);
       setLiquidationDate(nfeData.issueDate);
-      
+
       // Auto-mapping
       const initialMappings: Record<number, string> = {};
       const initialSave: Record<number, boolean> = {};
-      
+
       nfeData.items.forEach((item, index) => {
         const normalized = normalizeProductName(item.xProd);
-        
+
         // Find mapping
-        const mapping = xmlMappings.find(m => 
+        const mapping = xmlMappings.find(m =>
           (item.gtin && m.matchType === 'GTIN' && m.matchKey === item.gtin) ||
           (m.supplierCnpj === nfeData.supplierCnpj && m.matchType === 'SUPPLIER_CODE' && m.matchKey === item.cProd) ||
           (m.supplierCnpj === nfeData.supplierCnpj && m.matchType === 'NAME_NORMALIZED' && m.matchKey === normalized)
         );
-        
+
         if (mapping) {
           initialMappings[index] = mapping.accountId;
-          initialSave[index] = false; // Already saved
+          initialSave[index] = false;
         } else {
           initialMappings[index] = '';
-          initialSave[index] = true; // Default ON for new ones
+          initialSave[index] = true;
         }
       });
-      
+
       setItemMappings(initialMappings);
       setSaveNewMappings(initialSave);
     }
@@ -105,7 +104,7 @@ export const XmlImportModal: React.FC<Props> = ({
       try {
         const hash = await sha256(text);
         const data = parseNfeXml(text);
-        
+
         if (activeCompany) {
           const isDuplicate = await xmlImportService.checkDuplicate(activeCompany.id, data.nfeKey, hash);
           if (isDuplicate) {
@@ -126,7 +125,7 @@ export const XmlImportModal: React.FC<Props> = ({
 
   const handleConfirm = async () => {
     if (!nfeData) return;
-    
+
     // Check if all items are mapped
     const unmapped = nfeData.items.some((_, i) => !itemMappings[i]);
     if (unmapped) {
@@ -143,13 +142,12 @@ export const XmlImportModal: React.FC<Props> = ({
     try {
       // 1. Find or create entity
       let entityId = '';
-      
+
       // Try by CNPJ first
       if (nfeData.supplierCnpj && nfeData.supplierCnpj.replace(/\D/g, "").length === 14 && activeCompany) {
         const favored = await favoredService.getOrCreateFavoredByCnpj(nfeData.supplierCnpj, nfeData.supplierName, activeCompany.id);
         if (favored) {
           entityId = favored.id;
-          // If it's a new one, we should notify the parent to update the list
           const existsLocally = entities.some(e => e.id === favored.id);
           if (!existsLocally && onAddEntity) {
             onAddEntity(favored);
@@ -162,7 +160,6 @@ export const XmlImportModal: React.FC<Props> = ({
         if (selectedEntityId) {
           entityId = selectedEntityId;
         } else {
-          // Final fallback by name (legacy)
           entityId = entities.find(e => e.name.includes(nfeData.supplierName) || e.name === nfeData.supplierName)?.id || '';
         }
       }
@@ -178,11 +175,10 @@ export const XmlImportModal: React.FC<Props> = ({
       nfeData.items.forEach((item, index) => {
         if (saveNewMappings[index]) {
           const normalized = normalizeProductName(item.xProd);
-          
-          // Priority for new mapping
+
           let matchType: XmlMapping['matchType'] = 'NAME_NORMALIZED';
           let matchKey = normalized;
-          
+
           if (item.gtin) {
             matchType = 'GTIN';
             matchKey = item.gtin;
@@ -201,7 +197,7 @@ export const XmlImportModal: React.FC<Props> = ({
           });
         }
       });
-      
+
       if (newMappings.length > 0) {
         onSaveMappings(newMappings);
       }
@@ -225,11 +221,12 @@ export const XmlImportModal: React.FC<Props> = ({
         entityId,
         liquidationDate: status === 'LIQUIDADO' ? liquidationDate : undefined,
         bankId: status === 'LIQUIDADO' ? selectedBank : undefined,
-        amount: totalAmount
+        amount: totalAmount,
+        invoiceNumber: nfeData.nfeNumber
       }));
 
       onAddPostings(postings);
-      
+
       // 4. Log successful import
       if (activeCompany && nfeData) {
         await xmlImportService.logImport({
@@ -238,6 +235,7 @@ export const XmlImportModal: React.FC<Props> = ({
           file_name: file?.name || 'unknown',
           supplier_cnpj: nfeData.supplierCnpj,
           invoice_key: nfeData.nfeKey,
+          invoice_number: nfeData.nfeNumber,
           status: 'imported'
         });
       }
@@ -245,7 +243,6 @@ export const XmlImportModal: React.FC<Props> = ({
       onClose();
       reset();
     } catch (err: any) {
-      // Log error
       if (activeCompany && nfeData) {
         await xmlImportService.logImport({
           company_id: activeCompany.id,
@@ -253,6 +250,7 @@ export const XmlImportModal: React.FC<Props> = ({
           file_name: file?.name || 'unknown',
           supplier_cnpj: nfeData.supplierCnpj,
           invoice_key: nfeData.nfeKey,
+          invoice_number: nfeData.nfeNumber,
           status: 'error',
           error_message: err.message || String(err)
         });
@@ -269,6 +267,14 @@ export const XmlImportModal: React.FC<Props> = ({
     setNfeData(null);
     setItemMappings({});
     setSaveNewMappings({});
+    setSelectedEntityId('');
+    setStatus('PROVISIONADO');
+    setCompetenceDate('');
+    setOccurrenceDate('');
+    setDueDate('');
+    setLiquidationDate('');
+    setSelectedBank('');
+    setSelectedMethod('');
   };
 
   if (!isOpen) return null;
@@ -298,7 +304,6 @@ export const XmlImportModal: React.FC<Props> = ({
             </div>
           ) : (
             <>
-              {/* NF-e Summary */}
               <section className="grid grid-cols-1 md:grid-cols-4 gap-6 bg-slate-950/50 p-6 rounded-3xl border border-slate-800">
                 <div>
                   <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Fornecedor</p>
@@ -315,20 +320,19 @@ export const XmlImportModal: React.FC<Props> = ({
                   <p className="text-sm font-black text-emerald-400">R$ {nfeData.totalValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                 </div>
                 <div className="flex flex-col gap-2">
-                   <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Favorecido (Manual)</label>
-                   <select 
+                  <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Favorecido (Manual)</label>
+                  <select
                     value={selectedEntityId}
                     onChange={e => setSelectedEntityId(e.target.value)}
                     className="text-[10px] p-2 bg-slate-900 border border-slate-800 rounded-xl outline-none font-bold text-slate-300"
-                   >
+                  >
                     <option value="">Auto-identificar...</option>
                     {sortedEntities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-                   </select>
-                   <button onClick={reset} className="text-[9px] font-black text-rose-500 uppercase tracking-widest hover:underline text-left">Trocar Arquivo</button>
+                  </select>
+                  <button onClick={reset} className="text-[9px] font-black text-rose-500 uppercase tracking-widest hover:underline text-left">Trocar Arquivo</button>
                 </div>
               </section>
 
-              {/* Items Mapping */}
               <section>
                 <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-6 flex items-center gap-3">
                   <span className="w-2 h-2 rounded-full bg-blue-500"></span>
@@ -346,8 +350,8 @@ export const XmlImportModal: React.FC<Props> = ({
                         </div>
                       </div>
                       <div className="flex flex-col lg:flex-row gap-4 items-center w-full lg:w-auto">
-                        <select 
-                          value={itemMappings[idx]} 
+                        <select
+                          value={itemMappings[idx]}
                           onChange={(e) => setItemMappings(prev => ({ ...prev, [idx]: e.target.value }))}
                           className={`text-[10px] p-2.5 bg-slate-900 border rounded-xl outline-none font-bold min-w-[200px] ${itemMappings[idx] ? 'border-emerald-500/30 text-emerald-400' : 'border-rose-500/30 text-rose-400'}`}
                         >
@@ -357,9 +361,9 @@ export const XmlImportModal: React.FC<Props> = ({
                           ))}
                         </select>
                         <label className="flex items-center gap-2 cursor-pointer select-none">
-                          <input 
-                            type="checkbox" 
-                            checked={saveNewMappings[idx]} 
+                          <input
+                            type="checkbox"
+                            checked={saveNewMappings[idx]}
                             onChange={(e) => setSaveNewMappings(prev => ({ ...prev, [idx]: e.target.checked }))}
                             className="w-4 h-4 rounded border-slate-800 bg-slate-900 text-rose-500 focus:ring-rose-500"
                           />
@@ -371,21 +375,20 @@ export const XmlImportModal: React.FC<Props> = ({
                 </div>
               </section>
 
-              {/* Launch Settings */}
               <section className="bg-slate-950/30 p-8 rounded-[2rem] border border-slate-800 space-y-8">
                 <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] flex items-center gap-3">
                   <span className="w-2 h-2 rounded-full bg-purple-500"></span>
                   Configurações de Lançamento
                 </h3>
-                
+
                 <div className="flex gap-4 mb-8">
-                  <button 
+                  <button
                     onClick={() => setStatus('LIQUIDADO')}
                     className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${status === 'LIQUIDADO' ? 'bg-rose-600 text-white shadow-lg' : 'bg-slate-900 text-slate-500 border border-slate-800'}`}
                   >
                     Liquidado
                   </button>
-                  <button 
+                  <button
                     onClick={() => setStatus('PROVISIONADO')}
                     className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${status === 'PROVISIONADO' ? 'bg-orange-600 text-white shadow-lg' : 'bg-slate-900 text-slate-500 border border-slate-800'}`}
                   >
@@ -434,7 +437,7 @@ export const XmlImportModal: React.FC<Props> = ({
         <footer className="p-8 border-t border-slate-800 flex justify-end gap-4 shrink-0">
           <button onClick={onClose} className="px-8 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest hover:text-white transition-all">Cancelar</button>
           {nfeData && (
-            <button 
+            <button
               onClick={handleConfirm}
               disabled={isProcessing}
               className="px-10 py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shadow-xl shadow-emerald-950/50 disabled:opacity-50"
