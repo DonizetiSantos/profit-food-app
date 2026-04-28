@@ -4,6 +4,7 @@ import { ofxImportService } from '../services/ofxImportService';
 import { settlementService } from '../services/settlementService';
 import { supabase } from '../src/lib/supabase';
 import { useActiveCompany } from '../src/contexts/CompanyContext';
+import { IfoodImportModal } from './IfoodImportModal';
 
 interface Props {
   banks: Bank[];
@@ -17,6 +18,7 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
   const [transactions, setTransactions] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [isIfoodModalOpen, setIsIfoodModalOpen] = useState(false);
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [selectedTransaction, setSelectedTransaction] = useState<any>(null);
@@ -122,6 +124,7 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
     setLoadingCandidates(true);
     setSelectedPostingId('');
     setIsManualMode(false);
+    setManualCandidates([]);
     
     // Clear manual filters by default as requested
     setManualStartDate('');
@@ -143,6 +146,18 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
         // But usually in UI we might want a confirmation if it's the manual click.
         // However, the prompt says "auto-conciliação apenas quando a confiança for alta".
         // I'll implement a separate "Conciliar Tudo" button for the bulk action.
+      }
+
+      if (results.length === 0) {
+        setIsManualMode(true);
+        setLoadingManual(true);
+
+        try {
+          const manualResults = await ofxImportService.searchPostings(activeCompany.id, {});
+          setManualCandidates(manualResults);
+        } finally {
+          setLoadingManual(false);
+        }
       }
     } catch (err) {
       console.error("Erro ao buscar candidatos:", err);
@@ -453,6 +468,15 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
               {importing ? 'Processando...' : 'Importar OFX'}
+            </button>
+
+            <button
+              onClick={() => setIsIfoodModalOpen(true)}
+              disabled={!selectedBankId}
+              className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg ${!selectedBankId ? 'bg-slate-800 text-slate-600 cursor-not-allowed' : 'bg-cyan-600 hover:bg-cyan-500 text-white'}`}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M12 18v-6"/><path d="m9 15 3 3 3-3"/></svg>
+              Importar CSV iFood
             </button>
 
             <button 
@@ -828,6 +852,17 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
           </div>
         </div>
       )}
+
+      <IfoodImportModal
+        isOpen={isIfoodModalOpen}
+        bankId={selectedBankId}
+        onClose={() => setIsIfoodModalOpen(false)}
+        onSuccess={() => {
+          setIsIfoodModalOpen(false);
+          loadTransactions();
+          if (onRefresh) onRefresh();
+        }}
+      />
     </div>
   );
 };
