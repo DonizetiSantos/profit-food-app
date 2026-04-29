@@ -5,9 +5,16 @@ export interface IfoodImportPreviewItem {
   transactionDate: string;
   description: string;
   category: string | null;
-  amount: number;
-  bankAmount: number;
-  rawRow: Record<string, string>;
+  grossAmount: number;
+  feeAmount: number;
+  netAmount: number;
+  pixSentAmount: number;
+  pixReceivedAmount: number;
+  repasseAmount: number;
+  itemsCount: number;
+  hasPixSent: boolean;
+  difference: number;
+  rawRows: Record<string, string>[];
 }
 
 export interface IfoodImportPreview {
@@ -15,6 +22,10 @@ export interface IfoodImportPreview {
   fileHash: string;
   rows: IfoodImportPreviewItem[];
   totalRows: number;
+  totalOriginalRows: number;
+  totalGrossAmount: number;
+  totalFeeAmount: number;
+  totalNetAmount: number;
   totalAmount: number;
 }
 
@@ -23,6 +34,13 @@ const REQUIRED_HEADERS = ['data da transação', 'descrição', 'valor', 'catego
 const normalizeHeader = (value: string) =>
   value
     .replace(/^\uFEFF/, '')
+    .trim()
+    .toLowerCase();
+
+const normalizeText = (value: string | null | undefined) =>
+  (value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
     .trim()
     .toLowerCase();
 
@@ -138,22 +156,92 @@ const parseAmount = (value: string, rowNumber: number): number => {
 
 const toMoney = (value: number): number => Number(value.toFixed(2));
 
+const isFeeRow = (description: string, category: string | null) => {
+  const text = `${normalizeText(description)} ${normalizeText(category)}`;
+  return text.includes('taxa de antecipacao') || text.includes('antecipacao taxa');
+};
 
-const getBankTransactionAmount = (description: string, category: string | null, amount: number): number => {
-  const text = `${description || ''} ${category || ''}`
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase();
+const isPixSentRow = (description: string, category: string | null) => {
+  const text = `${normalizeText(description)} ${normalizeText(category)}`;
+  return text.includes('pix enviado');
+};
 
-  if (text.includes('enviado') || text.includes('saida') || text.includes('débito') || text.includes('debito')) {
-    return toMoney(-Math.abs(amount));
-  }
+const isPixReceivedRow = (description: string, category: string | null) => {
+  const text = `${normalizeText(description)} ${normalizeText(category)}`;
+  return text.includes('pix recebido');
+};
 
-  if (text.includes('recebido') || text.includes('repasse') || text.includes('entrada') || text.includes('crédito') || text.includes('credito')) {
-    return toMoney(Math.abs(amount));
-  }
+const isRepasseRow = (description: string, category: string | null) => {
+  const text = `${normalizeText(description)} ${normalizeText(category)}`;
+  return text.includes('repasse ifood') || text.includes('antecipacao semanal');
+};
 
-  return toMoney(amount);
+interface ParsedIfoodRow {
+  transactionDate: string;
+  description: string;
+  category: string | null;
+  amount: number;
+  rawRow: Record<string, string>;
+}
+
+const buildBatchPreviewRows = (rows: ParsedIfoodRow[]): IfoodImportPreviewItem[] => {
+  const batches = new Map<string, ParsedIfoodRow[]>();
+
+  rows.forEach((row) => {
+    const current = batches.get(row.transactionDate) || [];
+    current.push(row);
+    batches.set(row.transactionDate, current);
+  });
+
+  return Array.from(batches.entries())
+    .map(([transactionDate, batchRows]) => {
+      const repasseAmount = toMoney(
+        batchRows
+          .filter((row) => isRepasseRow(row.description, row.category))
+          .reduce((sum, row) => sum + Math.abs(row.amount), 0)
+      );
+
+      const pixReceivedAmount = toMoney(
+        batchRows
+          .filter((row) => isPixReceivedRow(row.description, row.category))
+          .reduce((sum, row) => sum + Math.abs(row.amount), 0)
+      );
+
+      const feeAmount = toMoney(
+        batchRows
+          .filter((row) => isFeeRow(row.description, row.category))
+          .reduce((sum, row) => sum + Math.abs(row.amount), 0)
+      );
+
+      const pixSentAmount = toMoney(
+        batchRows
+          .filter((row) => isPixSentRow(row.description, row.category))
+          .reduce((sum, row) => sum + Math.abs(row.amount), 0)
+      );
+
+      const grossAmount = toMoney(repasseAmount + pixReceivedAmount);
+      const calculatedNetAmount = toMoney(grossAmount - feeAmount);
+      const hasPixSent = pixSentAmount > 0;
+      const netAmount = hasPixSent ? pixSentAmount : 0;
+      const difference = toMoney(calculatedNetAmount - netAmount);
+
+      return {
+        transactionDate,
+        description: 'Repasse iFood consolidado',
+        category: 'Repasse iFood',
+        grossAmount,
+        feeAmount,
+        netAmount,
+        pixSentAmount,
+        pixReceivedAmount,
+        repasseAmount,
+        itemsCount: batchRows.length,
+        hasPixSent,
+        difference,
+        rawRows: batchRows.map((row) => row.rawRow),
+      };
+    })
+    .sort((a, b) => a.transactionDate.localeCompare(b.transactionDate));
 };
 
 export const ifoodImportService = {
@@ -176,7 +264,7 @@ export const ifoodImportService = {
 
     const parsedRows = parseCsv(text);
 
-    const rows = parsedRows.map((row, index) => {
+    const normalizedRows = parsedRows.map((row, index) => {
       const rowNumber = index + 2;
       const transactionDate = parseDate(row['data da transação'], rowNumber);
       const description = row['descrição']?.trim();
@@ -187,24 +275,35 @@ export const ifoodImportService = {
         throw new Error(`Descrição vazia na linha ${rowNumber}.`);
       }
 
-      const bankAmount = getBankTransactionAmount(description, category, amount);
-
       return {
         transactionDate,
         description,
         category,
         amount,
-        bankAmount,
         rawRow: row,
       };
     });
 
-    if (rows.length === 0) {
+    if (normalizedRows.length === 0) {
       throw new Error('Nenhuma linha válida encontrada no CSV do iFood.');
     }
 
-    const totalAmount = toMoney(
-      rows.reduce((sum, row) => sum + Number(row.amount || 0), 0)
+    const rows = buildBatchPreviewRows(normalizedRows);
+
+    if (rows.length === 0) {
+      throw new Error('Nenhum lote válido encontrado no CSV do iFood.');
+    }
+
+    const totalGrossAmount = toMoney(
+      rows.reduce((sum, row) => sum + Number(row.grossAmount || 0), 0)
+    );
+
+    const totalFeeAmount = toMoney(
+      rows.reduce((sum, row) => sum + Number(row.feeAmount || 0), 0)
+    );
+
+    const totalNetAmount = toMoney(
+      rows.reduce((sum, row) => sum + Number(row.netAmount || 0), 0)
     );
 
     return {
@@ -212,7 +311,11 @@ export const ifoodImportService = {
       fileHash,
       rows,
       totalRows: rows.length,
-      totalAmount,
+      totalOriginalRows: normalizedRows.length,
+      totalGrossAmount,
+      totalFeeAmount,
+      totalNetAmount,
+      totalAmount: totalNetAmount,
     };
   },
 
@@ -230,7 +333,7 @@ export const ifoodImportService = {
       file_hash: preview.fileHash,
       status: 'imported',
       total_rows: preview.totalRows,
-      total_amount: preview.totalAmount,
+      total_amount: preview.totalNetAmount,
     });
 
     if (importError) throw importError;
@@ -241,8 +344,21 @@ export const ifoodImportService = {
       transaction_date: row.transactionDate,
       description: row.description,
       category: row.category,
-      amount: row.amount,
-      raw_row: row.rawRow,
+      amount: row.netAmount,
+      raw_row: {
+        source: 'ifood_csv_batch',
+        gross_amount: row.grossAmount,
+        fee_amount: row.feeAmount,
+        net_amount: row.netAmount,
+        pix_sent_amount: row.pixSentAmount,
+        pix_received_amount: row.pixReceivedAmount,
+        repasse_amount: row.repasseAmount,
+        calculated_net_amount: toMoney(row.grossAmount - row.feeAmount),
+        difference: row.difference,
+        has_pix_sent: row.hasPixSent,
+        items_count: row.itemsCount,
+        original_rows: row.rawRows,
+      },
       posting_id: null,
     }));
 
@@ -252,28 +368,42 @@ export const ifoodImportService = {
 
     if (itemsError) throw itemsError;
 
+    const rowsWithCashMovement = preview.rows.filter((row) => row.netAmount > 0);
+
+    if (rowsWithCashMovement.length === 0) {
+      return;
+    }
+
     const bankTransactions = await Promise.all(
-      preview.rows.map(async (row, index) => {
-        const fitIdPayload = `ifood|${companyId}|${bankId}|${preview.fileHash}|${index}|${row.transactionDate}|${row.bankAmount}|${row.description}`;
+      rowsWithCashMovement.map(async (row, index) => {
+        const fitIdPayload = `ifood_batch|${companyId}|${bankId}|${preview.fileHash}|${index}|${row.transactionDate}|${row.netAmount}`;
         const fitId = `IFOOD-${await sha1(fitIdPayload)}`;
 
         return {
           bank_id: bankId,
           company_id: companyId,
           posted_date: row.transactionDate,
-          amount: row.bankAmount,
-          description: `IFOOD - ${row.description}${row.category ? ` - ${row.category}` : ''}`,
+          amount: row.netAmount,
+          description: `IFOOD - Repasse líquido - ${row.transactionDate}`,
           fit_id: fitId,
           check_number: null,
           ofx_file_hash: preview.fileHash,
           raw: {
             source: 'ifood_csv',
+            source_type: 'ifood_csv_batch',
             ifood_import_id: importId,
             file_name: preview.fileName,
             file_hash: preview.fileHash,
-            original_amount: row.amount,
-            bank_amount: row.bankAmount,
-            row: row.rawRow,
+            gross_amount: row.grossAmount,
+            fee_amount: row.feeAmount,
+            net_amount: row.netAmount,
+            pix_sent_amount: row.pixSentAmount,
+            pix_received_amount: row.pixReceivedAmount,
+            repasse_amount: row.repasseAmount,
+            calculated_net_amount: toMoney(row.grossAmount - row.feeAmount),
+            difference: row.difference,
+            items_count: row.itemsCount,
+            rows: row.rawRows,
           },
         };
       })

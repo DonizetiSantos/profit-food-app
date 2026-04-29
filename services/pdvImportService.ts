@@ -24,6 +24,29 @@ const normalizeText = (value: string | null | undefined) =>
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
 
+const IFOOD_TERMS = ['ifood', 'i food', 'i-food'];
+
+const includesAny = (text: string, terms: string[]) =>
+  terms.some((term) => text.includes(term));
+
+const isIfoodPaymentRow = (
+  row: NormalizedPdvClosing,
+  rule: PaymentSettlementRule | null
+): boolean => {
+  const rawLabel = normalizeText(row.rawLabel);
+  const paymentMethodName = normalizeText(rule?.payment_methods?.name);
+  return includesAny(rawLabel, IFOOD_TERMS) || includesAny(paymentMethodName, IFOOD_TERMS);
+};
+
+const calculateIfoodWeeklySettlementDate = (occurrenceDate: string): string => {
+  const date = new Date(`${occurrenceDate}T12:00:00`);
+  const dayOfWeek = date.getDay(); // 0 = domingo, 6 = sábado
+  const daysUntilSaturday = 6 - dayOfWeek;
+  const settlementDate = new Date(date);
+  settlementDate.setDate(date.getDate() + daysUntilSaturday + 4); // quarta-feira seguinte
+  return settlementDate.toISOString().split('T')[0];
+};
+
 const buildRuleMaps = (rules: PaymentSettlementRule[]) => {
   const byPaymentMethodId = new Map<string, PaymentSettlementRule[]>();
   const byMethodName = new Map<string, PaymentSettlementRule[]>();
@@ -146,13 +169,18 @@ const applyRuleToRow = (
 
   const settlementDays = Number(rule.settlement_days || 0);
   const receivesSameDay = !!rule.receives_same_day;
+  const isIfoodPayment = isIfoodPaymentRow(row, rule);
 
   let mappedStatus: 'LIQUIDADO' | 'PROVISIONADO' =
     rule.default_status || 'PROVISIONADO';
   let dueDate = row.closingDate;
   let liquidationDate: string | null = null;
 
-  if (receivesSameDay) {
+  if (isIfoodPayment) {
+    mappedStatus = 'PROVISIONADO';
+    dueDate = calculateIfoodWeeklySettlementDate(row.closingDate);
+    liquidationDate = null;
+  } else if (receivesSameDay) {
     mappedStatus = 'LIQUIDADO';
     dueDate = row.closingDate;
     liquidationDate = row.closingDate;
@@ -421,6 +449,7 @@ export const pdvImportService = {
           observations: `Venda PDV (${source}) - ${row.rawLabel}`,
           payment_method_id: row.paymentMethodId,
           amount: row.grossAmount,
+          expected_net_amount: Number(row.netAmount ?? row.grossAmount ?? 0),
           bank_id: bankId || null,
         });
       }

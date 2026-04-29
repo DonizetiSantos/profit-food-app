@@ -9,6 +9,12 @@ interface Props {
   onSuccess: () => void;
 }
 
+const formatCurrency = (value: number) =>
+  value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const formatDateBR = (date: string) =>
+  new Date(date + 'T00:00:00').toLocaleDateString('pt-BR');
+
 export const IfoodImportModal: React.FC<Props> = ({ isOpen, bankId, onClose, onSuccess }) => {
   const { activeCompany } = useActiveCompany();
   const [file, setFile] = useState<File | null>(null);
@@ -45,7 +51,7 @@ export const IfoodImportModal: React.FC<Props> = ({ isOpen, bankId, onClose, onS
     setImporting(true);
     try {
       await ifoodImportService.executeImport(preview, activeCompany.id, bankId);
-      alert('Importação iFood concluída com sucesso. As movimentações foram criadas para conciliação bancária, sem gerar DRE nesta etapa.');
+      alert('Importação iFood concluída com sucesso. Os lotes foram consolidados por data e as movimentações líquidas foram criadas para conciliação bancária, sem gerar DRE nesta etapa.');
       onSuccess();
       onClose();
       reset();
@@ -72,12 +78,12 @@ export const IfoodImportModal: React.FC<Props> = ({ isOpen, bankId, onClose, onS
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-      <div className="bg-slate-900 w-full max-w-5xl max-h-[90vh] rounded-[2.5rem] border border-slate-800 shadow-2xl flex flex-col overflow-hidden">
+      <div className="bg-slate-900 w-full max-w-6xl max-h-[90vh] rounded-[2.5rem] border border-slate-800 shadow-2xl flex flex-col overflow-hidden">
         <header className="p-8 border-b border-slate-800 flex justify-between items-center shrink-0">
           <div>
             <h2 className="text-2xl font-black text-white uppercase tracking-tight">Importar CSV iFood</h2>
             <p className="text-slate-500 text-xs font-medium uppercase tracking-widest mt-1">
-              Fluxo de caixa realizado. Não gera DRE nesta etapa.
+              Fluxo de caixa realizado. Consolidado por lote diário. Não gera DRE nesta etapa.
             </p>
           </div>
           <button onClick={handleClose} className="text-slate-500 hover:text-white transition-colors" disabled={importing}>
@@ -112,25 +118,30 @@ export const IfoodImportModal: React.FC<Props> = ({ isOpen, bankId, onClose, onS
               <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-4">
                 <p className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-300">Regra estrutural ativa</p>
                 <p className="text-xs text-emerald-100 leading-relaxed mt-2">
-                  CSV iFood entra como <strong>fluxo de caixa realizado</strong>. Nesta etapa o sistema grava o controle em <strong>ifood_imports</strong> e <strong>ifood_import_items</strong> e cria as movimentações em <strong>bank_transactions</strong> para conciliação. Nenhum lançamento automático em DRE é criado.
+                  O CSV do iFood é consolidado por <strong>data do lote</strong>. O sistema soma <strong>Repasse iFood</strong> e <strong>Pix recebido</strong> como bruto, separa <strong>Taxa de antecipação</strong> como desconto e usa <strong>Pix enviado</strong> como líquido para conciliação bancária. Nenhum lançamento automático em DRE é criado.
                 </p>
               </div>
 
               {preview && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="bg-slate-950/70 border border-slate-800 rounded-2xl p-5">
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                  <div className="bg-slate-950/70 border border-slate-800 rounded-2xl p-5 md:col-span-2">
                     <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Arquivo</p>
                     <p className="text-sm font-black text-white mt-2 truncate">{preview.fileName}</p>
-                  </div>
-                  <div className="bg-slate-950/70 border border-slate-800 rounded-2xl p-5">
-                    <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Linhas</p>
-                    <p className="text-2xl font-black text-white mt-2">{preview.totalRows}</p>
-                  </div>
-                  <div className="bg-slate-950/70 border border-slate-800 rounded-2xl p-5">
-                    <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Total CSV</p>
-                    <p className="text-2xl font-black text-emerald-400 mt-2">
-                      R$ {preview.totalAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    <p className="text-[10px] font-bold text-slate-500 mt-2">
+                      {preview.totalOriginalRows} linhas originais consolidadas em {preview.totalRows} lote(s)
                     </p>
+                  </div>
+                  <div className="bg-slate-950/70 border border-slate-800 rounded-2xl p-5">
+                    <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Bruto</p>
+                    <p className="text-2xl font-black text-white mt-2">R$ {formatCurrency(preview.totalGrossAmount)}</p>
+                  </div>
+                  <div className="bg-slate-950/70 border border-slate-800 rounded-2xl p-5">
+                    <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Taxas</p>
+                    <p className="text-2xl font-black text-amber-400 mt-2">R$ {formatCurrency(preview.totalFeeAmount)}</p>
+                  </div>
+                  <div className="bg-slate-950/70 border border-slate-800 rounded-2xl p-5">
+                    <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Líquido</p>
+                    <p className="text-2xl font-black text-emerald-400 mt-2">R$ {formatCurrency(preview.totalNetAmount)}</p>
                   </div>
                 </div>
               )}
@@ -140,25 +151,44 @@ export const IfoodImportModal: React.FC<Props> = ({ isOpen, bankId, onClose, onS
                   <thead>
                     <tr className="bg-slate-950 text-slate-500 text-[9px] font-black uppercase tracking-[0.2em] border-b border-slate-800">
                       <th className="px-6 py-4">Data</th>
-                      <th className="px-6 py-4">Descrição</th>
-                      <th className="px-6 py-4">Categoria</th>
-                      <th className="px-6 py-4 text-right">Valor</th>
+                      <th className="px-6 py-4 text-right">Repasse</th>
+                      <th className="px-6 py-4 text-right">Pix recebido</th>
+                      <th className="px-6 py-4 text-right">Bruto</th>
+                      <th className="px-6 py-4 text-right">Taxa</th>
+                      <th className="px-6 py-4 text-right">Líquido / Pix enviado</th>
+                      <th className="px-6 py-4 text-right">Diferença</th>
+                      <th className="px-6 py-4 text-center">Linhas</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/50">
-                    {preview?.rows.map((row, index) => (
-                      <tr key={`${row.transactionDate}-${row.description}-${index}`} className="hover:bg-slate-800/20 transition-colors">
-                        <td className="px-6 py-4 text-[10px] font-black text-slate-300">{row.transactionDate}</td>
-                        <td className="px-6 py-4 text-[10px] font-black text-slate-200 uppercase">{row.description}</td>
-                        <td className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase">{row.category || '-'}</td>
-                        <td className="px-6 py-4 text-[10px] font-black text-emerald-400 text-right">
-                          R$ {row.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    {preview?.rows.map((row) => (
+                      <tr key={row.transactionDate} className="hover:bg-slate-800/20 transition-colors">
+                        <td className="px-6 py-4 text-[10px] font-black text-slate-300 whitespace-nowrap">{formatDateBR(row.transactionDate)}</td>
+                        <td className="px-6 py-4 text-[10px] font-black text-slate-200 text-right whitespace-nowrap">R$ {formatCurrency(row.repasseAmount)}</td>
+                        <td className="px-6 py-4 text-[10px] font-black text-slate-200 text-right whitespace-nowrap">R$ {formatCurrency(row.pixReceivedAmount)}</td>
+                        <td className="px-6 py-4 text-[10px] font-black text-white text-right whitespace-nowrap">R$ {formatCurrency(row.grossAmount)}</td>
+                        <td className="px-6 py-4 text-[10px] font-black text-amber-400 text-right whitespace-nowrap">R$ {formatCurrency(row.feeAmount)}</td>
+                        <td className={`px-6 py-4 text-[10px] font-black text-right whitespace-nowrap ${row.hasPixSent ? 'text-emerald-400' : 'text-slate-500'}`}>
+                          {row.hasPixSent ? `R$ ${formatCurrency(row.netAmount)}` : 'Sem Pix enviado'}
                         </td>
+                        <td className={`px-6 py-4 text-[10px] font-black text-right whitespace-nowrap ${Math.abs(row.difference) <= 0.01 ? 'text-slate-500' : 'text-rose-400'}`}>
+                          R$ {formatCurrency(row.difference)}
+                        </td>
+                        <td className="px-6 py-4 text-[10px] font-black text-slate-400 text-center">{row.itemsCount}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+
+              {preview?.rows.some((row) => !row.hasPixSent) && (
+                <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-4">
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-300">Atenção</p>
+                  <p className="text-xs text-amber-100 leading-relaxed mt-2">
+                    Existem lotes sem <strong>Pix enviado</strong>. Eles serão gravados no controle do iFood, mas não gerarão movimentação em <strong>bank_transactions</strong>, porque ainda não há valor líquido efetivamente movimentado para conciliação bancária.
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </div>

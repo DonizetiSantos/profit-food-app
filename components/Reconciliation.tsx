@@ -5,6 +5,7 @@ import { settlementService } from '../services/settlementService';
 import { supabase } from '../src/lib/supabase';
 import { useActiveCompany } from '../src/contexts/CompanyContext';
 import { IfoodImportModal } from './IfoodImportModal';
+import { csvReconciliationService } from '../services/csvReconciliationService';
 
 interface Props {
   banks: Bank[];
@@ -117,6 +118,16 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
     return `${d}/${m}/${y}`;
   };
 
+  const getReconciliationCandidatesForTransaction = async (transaction: any) => {
+    if (!activeCompany) return [];
+
+    if (csvReconciliationService.isIfoodCsvTransaction(transaction)) {
+      return csvReconciliationService.getIfoodReconciliationCandidates(transaction, activeCompany.id);
+    }
+
+    return ofxImportService.getReconciliationCandidates(transaction, activeCompany.id);
+  };
+
   const handleReconcileClick = async (transaction: any) => {
     if (!activeCompany) return;
     console.log("Conciliar clicked", transaction.id);
@@ -124,8 +135,7 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
     setLoadingCandidates(true);
     setSelectedPostingId('');
     setIsManualMode(false);
-    setManualCandidates([]);
-    
+
     // Clear manual filters by default as requested
     setManualStartDate('');
     setManualEndDate('');
@@ -134,30 +144,18 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
     setManualQuery('');
 
     try {
-      const results = await ofxImportService.getReconciliationCandidates(transaction, activeCompany.id);
+      const results = await getReconciliationCandidatesForTransaction(transaction);
       setCandidates(results);
-      
+
       // Auto-select if confidence is high
       const bestMatch = results[0];
       if (bestMatch && bestMatch.confidence_level === 'high') {
         setSelectedPostingId(bestMatch.id);
-        
+
         // Auto-liquidate if requested (user said "para alta confiança executar automaticamente")
         // But usually in UI we might want a confirmation if it's the manual click.
         // However, the prompt says "auto-conciliação apenas quando a confiança for alta".
         // I'll implement a separate "Conciliar Tudo" button for the bulk action.
-      }
-
-      if (results.length === 0) {
-        setIsManualMode(true);
-        setLoadingManual(true);
-
-        try {
-          const manualResults = await ofxImportService.searchPostings(activeCompany.id, {});
-          setManualCandidates(manualResults);
-        } finally {
-          setLoadingManual(false);
-        }
       }
     } catch (err) {
       console.error("Erro ao buscar candidatos:", err);
@@ -185,7 +183,7 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
 
     try {
       for (const tx of pendingTransactions) {
-        const candidates = await ofxImportService.getReconciliationCandidates(tx, activeCompany.id);
+        const candidates = await getReconciliationCandidatesForTransaction(tx);
         const bestMatch = candidates[0];
 
         if (bestMatch && bestMatch.confidence_level === 'high') {
@@ -377,7 +375,10 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
       }
 
       // (C) Save learned mapping for future auto-reconciliations
-      if (posting.favored?.id) {
+      // OFX and CSV iFood use separate learning logic. Do not mix them.
+      if (csvReconciliationService.isIfoodCsvTransaction(bankTx)) {
+        await csvReconciliationService.saveIfoodLearning(bankTx, posting, activeCompany.id);
+      } else if (posting.favored?.id) {
         await ofxImportService.savePayeeMapping(bankTx.bank_id, bankTx.description, posting.favored.id, activeCompany.id);
       }
 
