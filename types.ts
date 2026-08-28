@@ -87,6 +87,70 @@ export interface FinancialPosting {
   invoiceNumber?: string;
 }
 
+/**
+ * Linha bruta da tabela `bank_transactions` no Supabase (extrato importado
+ * via OFX ou CSV/iFood). Nomes de coluna em snake_case, igual ao retorno de
+ * `.select('*')` - diferente da interface BankTransaction (camelCase, mais
+ * abaixo neste arquivo), usada pelo reconciliationService.
+ */
+export interface BankTransactionRow {
+  id: string;
+  company_id: string;
+  bank_id: string;
+  posted_date: string;
+  amount: number;
+  description: string;
+  fit_id?: string | null;
+  check_number?: string | null;
+  ofx_file_hash?: string | null;
+  raw?: {
+    block?: string;
+    source?: string;
+    row?: Record<string, string>;
+  } | null;
+  isReconciled?: boolean;
+}
+
+/**
+ * Linha bruta da tabela `postings`, como retornada pelas consultas de
+ * conciliação (`.select('*, accounts (name), favored (id, name)')`).
+ * Nomes de coluna em snake_case - diferente de FinancialPosting (camelCase),
+ * que é a forma já mapeada usada no restante do app.
+ */
+export interface PostingRow {
+  id: string;
+  company_id?: string;
+  status: 'LIQUIDADO' | 'PROVISIONADO';
+  competence_date?: string;
+  occurrence_date: string;
+  due_date?: string | null;
+  group: MainGroup;
+  account_id: string;
+  observations?: string | null;
+  payment_method_id?: string | null;
+  entity_id?: string | null;
+  liquidation_date?: string | null;
+  bank_id?: string | null;
+  amount: number;
+  invoice_number?: string | null;
+  accounts?: { name: string } | null;
+  favored?: { id: string; name: string } | null;
+}
+
+/** Candidato de conciliação: um PostingRow com os campos de score calculados. */
+export interface ReconciliationCandidate extends PostingRow {
+  payment_method_name?: string;
+  match_score: number;
+  confidence_level: 'high' | 'medium' | 'low';
+  reconciliation_mode: string;
+  expected_amount: number;
+  difference: number;
+  days_diff: number;
+  reasons: string[];
+  has_csv_learning?: boolean;
+  has_mapping?: boolean | null;
+}
+
 export interface Transaction {
   id: string;
   date: string;

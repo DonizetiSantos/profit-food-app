@@ -1,4 +1,5 @@
 import { supabase } from '../src/lib/supabase';
+import { BankTransactionRow, PostingRow, ReconciliationCandidate } from '../types';
 
 type ConfidenceLevel = 'high' | 'medium' | 'low';
 type ReconciliationMode = 'ifood_csv' | 'csv_learning' | 'assisted';
@@ -40,28 +41,28 @@ const normalizeText = (value: string | null | undefined): string =>
 const normalizeKey = (value: string | null | undefined): string =>
   normalizeText(value).replace(/\s+/g, ' ');
 
-const getRawRow = (bankTx: any): Record<string, any> => bankTx?.raw?.row || {};
+const getRawRow = (bankTx: BankTransactionRow): Record<string, string> => bankTx?.raw?.row || {};
 
-const getCsvDescription = (bankTx: any): string => {
+const getCsvDescription = (bankTx: BankTransactionRow): string => {
   const row = getRawRow(bankTx);
   return String(row['descrição'] || row['descricao'] || bankTx?.description || '').trim();
 };
 
-const getCsvCategory = (bankTx: any): string | null => {
+const getCsvCategory = (bankTx: BankTransactionRow): string | null => {
   const row = getRawRow(bankTx);
   const value = String(row.categoria || '').trim();
   return value || null;
 };
 
-const getTransactionSign = (bankTx: any): 'CREDIT' | 'DEBIT' =>
+const getTransactionSign = (bankTx: BankTransactionRow): 'CREDIT' | 'DEBIT' =>
   Number(bankTx?.amount || 0) >= 0 ? 'CREDIT' : 'DEBIT';
 
 export const csvReconciliationService = {
-  isIfoodCsvTransaction(bankTx: any): boolean {
+  isIfoodCsvTransaction(bankTx: BankTransactionRow): boolean {
     return bankTx?.raw?.source === 'ifood_csv';
   },
 
-  async getIfoodReconciliationCandidates(bankTx: any, companyId: string) {
+  async getIfoodReconciliationCandidates(bankTx: BankTransactionRow, companyId: string): Promise<ReconciliationCandidate[]> {
     const absAmount = Math.abs(Number(bankTx.amount || 0));
     const transactionDate = new Date(`${bankTx.posted_date}T00:00:00`);
     const source = 'ifood_csv';
@@ -130,9 +131,11 @@ export const csvReconciliationService = {
 
     if (postingsError) throw postingsError;
 
+    const postingRows = (postingsData || []) as PostingRow[];
+
     const paymentMethodIds = Array.from(
-      new Set((postingsData || []).map((posting: any) => posting.payment_method_id).filter(Boolean))
-    );
+      new Set(postingRows.map((posting) => posting.payment_method_id).filter(Boolean))
+    ) as string[];
 
     let paymentMethodNames = new Map<string, string>();
     if (paymentMethodIds.length > 0) {
@@ -142,13 +145,13 @@ export const csvReconciliationService = {
         .in('id', paymentMethodIds);
 
       if (methodsError) throw methodsError;
-      paymentMethodNames = new Map((methodsData || []).map((method: any) => [method.id, method.name]));
+      paymentMethodNames = new Map((methodsData || []).map((method: { id: string; name: string }) => [method.id, method.name]));
     }
 
     const categoryWords = normalizeText(csvCategory).split(' ').filter((word) => word.length > 2);
     const descriptionWords = normalizeText(csvDescription).split(' ').filter((word) => word.length > 2);
 
-    const candidates = (postingsData || []).map((posting: any) => {
+    const candidates: ReconciliationCandidate[] = postingRows.map((posting) => {
       const rule = settlementRules.find((item) => item.payment_method_id === posting.payment_method_id);
       const paymentMethodName = paymentMethodNames.get(posting.payment_method_id) || '';
       const paymentMethodWords = normalizeText(paymentMethodName).split(' ').filter((word) => word.length > 2);
@@ -259,12 +262,12 @@ export const csvReconciliationService = {
     });
 
     return candidates
-      .filter((candidate: any) => candidate.match_score >= 25)
-      .sort((a: any, b: any) => b.match_score - a.match_score)
+      .filter((candidate) => candidate.match_score >= 25)
+      .sort((a, b) => b.match_score - a.match_score)
       .slice(0, 10);
   },
 
-  async saveIfoodLearning(bankTx: any, posting: any, companyId: string): Promise<void> {
+  async saveIfoodLearning(bankTx: BankTransactionRow, posting: PostingRow, companyId: string): Promise<void> {
     if (!csvReconciliationService.isIfoodCsvTransaction(bankTx)) return;
 
     const descriptionKey = normalizeKey(getCsvDescription(bankTx) || bankTx.description);

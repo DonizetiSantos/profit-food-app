@@ -2,6 +2,7 @@
 import { supabase } from '../src/lib/supabase';
 import { sha1, sha256 } from './hash';
 import { parseOFX, ParsedOfx } from './ofxParser';
+import { BankTransactionRow, PostingRow, ReconciliationCandidate } from '../types';
 
 export type ImportStatus = 'SUCCESS' | 'DUPLICATE' | 'ERROR';
 
@@ -129,7 +130,7 @@ export const ofxImportService = {
     }
   },
 
-  async getTransactions(bankId: string, companyId: string, fromDate?: string, toDate?: string) {
+  async getTransactions(bankId: string, companyId: string, fromDate?: string, toDate?: string): Promise<BankTransactionRow[]> {
     let query = supabase
       .from('bank_transactions')
       .select(`
@@ -152,7 +153,7 @@ export const ofxImportService = {
     }));
   },
 
-  async getReconciliationCandidates(bankTx: any, companyId: string) {
+  async getReconciliationCandidates(bankTx: BankTransactionRow, companyId: string): Promise<ReconciliationCandidate[]> {
     const absAmount = Math.abs(bankTx.amount);
     const dateObj = new Date(bankTx.posted_date);
     
@@ -185,11 +186,13 @@ export const ofxImportService = {
 
     if (error) throw error;
 
+    const postingRows = (data || []) as PostingRow[];
+
     // Filter logic:
     // 1. If it's NOT Vendas Gerais, it's always a candidate (current logic)
     // 2. If it IS Vendas Gerais, it's only a candidate if the bank transaction is positive (entry)
     //    and the posting is a revenue (group RECEITAS) and is provisioned.
-    const filteredData = data.filter(p => {
+    const filteredData = postingRows.filter(p => {
       const isVendasGerais = p.accounts?.name?.toUpperCase() === 'VENDAS GERAIS';
       if (!isVendasGerais) return true;
       
@@ -227,7 +230,7 @@ export const ofxImportService = {
       .eq('is_active', true);
 
     // Scoring and Confidence logic
-    const candidates = filteredData.map(p => {
+    const candidates: ReconciliationCandidate[] = filteredData.map(p => {
       let score = 0;
       let reasons: string[] = [];
       let mode: 'expense' | 'instant_receipt' | 'card_receivable' | 'assisted' = 'assisted';

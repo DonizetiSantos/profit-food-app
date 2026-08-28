@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Bank, User } from '../types';
+import { Bank, User, BankTransactionRow, ReconciliationCandidate } from '../types';
 import { ofxImportService } from '../services/ofxImportService';
 import { settlementService } from '../services/settlementService';
 import { supabase } from '../src/lib/supabase';
@@ -16,14 +16,14 @@ interface Props {
 export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
   const { activeCompany } = useActiveCompany();
   const [selectedBankId, setSelectedBankId] = useState<string>('');
-  const [transactions, setTransactions] = useState<any[]>([]);
+  const [transactions, setTransactions] = useState<BankTransactionRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [importing, setImporting] = useState(false);
   const [isIfoodModalOpen, setIsIfoodModalOpen] = useState(false);
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
-  const [selectedTransaction, setSelectedTransaction] = useState<any>(null);
-  const [candidates, setCandidates] = useState<any[]>([]);
+  const [selectedTransaction, setSelectedTransaction] = useState<BankTransactionRow | null>(null);
+  const [candidates, setCandidates] = useState<ReconciliationCandidate[]>([]);
   const [loadingCandidates, setLoadingCandidates] = useState(false);
   const [selectedPostingId, setSelectedPostingId] = useState<string>('');
   const [reconciling, setReconciling] = useState(false);
@@ -115,7 +115,7 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
     return `${d}/${m}/${y}`;
   };
 
-  const getReconciliationCandidatesForTransaction = async (transaction: any) => {
+  const getReconciliationCandidatesForTransaction = async (transaction: BankTransactionRow): Promise<ReconciliationCandidate[]> => {
     if (!activeCompany) return [];
 
     if (csvReconciliationService.isIfoodCsvTransaction(transaction)) {
@@ -125,7 +125,7 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
     return ofxImportService.getReconciliationCandidates(transaction, activeCompany.id);
   };
 
-  const handleReconcileClick = async (transaction: any) => {
+  const handleReconcileClick = async (transaction: BankTransactionRow) => {
     if (!activeCompany) return;
     setSelectedTransaction(transaction);
     setLoadingCandidates(true);
@@ -218,7 +218,7 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
     }
   };
 
-  const performReconciliation = async (bankTx: any, posting: any, type: 'MANUAL' | 'AUTO' = 'MANUAL') => {
+  const performReconciliation = async (bankTx: BankTransactionRow, posting: ReconciliationCandidate, type: 'MANUAL' | 'AUTO' = 'MANUAL') => {
     if (!activeCompany) return;
     setReconciling(true);
 
