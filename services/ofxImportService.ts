@@ -24,9 +24,6 @@ export const ofxImportService = {
       const text = decoder.decode(buffer);
       const fileHash = await sha256(text);
 
-      console.log("OFX: file selected", { name: file.name, size: file.size, hash: fileHash });
-      console.log("OFX: decodedHeader", text.slice(0, 80).replace(/\n/g, ' '));
-      
       // 1. Check for duplicate file hash
       const { data: existingImport } = await supabase
         .from('ofx_imports')
@@ -58,19 +55,6 @@ export const ofxImportService = {
         return { status: 'ERROR', message: 'Nenhuma transação encontrada no arquivo OFX.' };
       }
 
-      const dates = parsedOfx.transactions.map(t => t.postedDate).sort();
-      const minDate = dates[0];
-      const maxDate = dates[dates.length - 1];
-      const example = parsedOfx.transactions[0];
-
-      console.log("OFX: parsed", { 
-        parsedCount, 
-        syntheticCount,
-        minDate, 
-        maxDate, 
-        example: { date: example.postedDate, amount: example.amount, fitId: example.fitId, memo: example.memo } 
-      });
-
       // 3. Check for existing transactions by fit_id
       const fitIds = parsedOfx.transactions.map(t => t.fitId).filter(Boolean) as string[];
       const { data: existingTxns, error: fetchError } = await supabase
@@ -84,12 +68,6 @@ export const ofxImportService = {
 
       const existingFitIds = new Set(existingTxns?.map(t => t.fit_id) || []);
       const newTransactions = parsedOfx.transactions.filter(t => !existingFitIds.has(t.fitId || ''));
-
-      console.log("OFX: duplicate check", { 
-        total: parsedCount, 
-        existing: existingFitIds.size, 
-        new: newTransactions.length 
-      });
 
       // 4. Create import record (if not exists)
       if (!existingImport) {
@@ -123,7 +101,6 @@ export const ofxImportService = {
           raw: t.raw
         }));
 
-        console.log("OFX: onConflict used =", "bank_id,fit_id");
         const { error: txnError } = await supabase
           .from('bank_transactions')
           .upsert(dbTransactions, { onConflict: "bank_id,fit_id" });
@@ -189,8 +166,6 @@ export const ofxImportService = {
     const tolerance = Math.max(0.10, absAmount * 0.005);
     const minAmount = absAmount - tolerance;
     const maxAmount = absAmount + tolerance;
-
-    console.log("OFX: searching candidates for", { absAmount, date: bankTx.posted_date, startDate, endDate, tolerance });
 
     const { data, error } = await supabase
       .from('postings')

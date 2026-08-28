@@ -77,10 +77,8 @@ const mapToDb = (table: string, data: any, companyId: string) => {
 
 export const datastore = {
   async loadAll(companyId: string): Promise<AppState> {
-    console.log(`[DataStore] Starting loadAll for company ${companyId} (Supabase-only)...`);
     try {
       const state = await this.syncFromSupabase(companyId);
-      console.log('[DataStore] Successfully loaded from Supabase.');
       return state;
     } catch (error) {
       console.error('[DataStore] Critical error loading from Supabase:', error);
@@ -89,11 +87,9 @@ export const datastore = {
   },
 
   async saveAll(state: AppState, companyId: string): Promise<void> {
-    console.log(`[DataStore] Starting saveAll for company ${companyId} (Supabase)...`);
     try {
       await this.syncToSupabase(state, companyId);
-      console.log('[DataStore] Successfully saved to Supabase.');
-      
+
       // Update LocalStorage only as a secondary cache
       localStorage.setItem(LOCAL_STORAGE_KEYS.BANKS, JSON.stringify(state.banks));
       localStorage.setItem(LOCAL_STORAGE_KEYS.PAYMENT_METHODS, JSON.stringify(state.paymentMethods));
@@ -108,12 +104,10 @@ export const datastore = {
   },
 
   async upsertOne(table: string, row: any, companyId: string): Promise<void> {
-    console.log(`[DataStore] Upserting to ${table} for company ${companyId}...`);
     const dbRow = mapToDb(table, row, companyId);
     try {
       const { error } = await supabase.from(table).upsert(dbRow);
       if (error) throw error;
-      console.log(`[DataStore] Successfully upserted to ${table}.`);
     } catch (error) {
       console.error(`[DataStore] Error upserting to ${table}:`, error);
       throw error;
@@ -121,11 +115,9 @@ export const datastore = {
   },
 
   async deleteOne(table: string, id: string, companyId: string): Promise<void> {
-    console.log(`[DataStore] Deleting from ${table} (id: ${id}) for company ${companyId}...`);
     try {
       const { error } = await supabase.from(table).delete().eq('id', id).eq('company_id', companyId);
       if (error) throw error;
-      console.log(`[DataStore] Successfully deleted from ${table}.`);
     } catch (error) {
       console.error(`[DataStore] Error deleting from ${table}:`, error);
       throw error;
@@ -133,7 +125,6 @@ export const datastore = {
   },
 
   async syncFromSupabase(companyId: string): Promise<AppState> {
-    console.log(`[DataStore] Syncing from Supabase for company ${companyId}...`);
     const [
       { data: banks },
       { data: paymentMethods },
@@ -149,15 +140,6 @@ export const datastore = {
       supabase.from('postings').select('*').eq('company_id', companyId),
       supabase.from('xml_item_mappings').select('*').eq('company_id', companyId)
     ]);
-
-    console.log('[DataStore] Records loaded:', {
-      banks: banks?.length || 0,
-      paymentMethods: paymentMethods?.length || 0,
-      favored: favored?.length || 0,
-      accounts: accounts?.length || 0,
-      postings: postings?.length || 0,
-      xmlMappings: xmlMappings?.length || 0
-    });
 
     return {
       banks: (banks || []).map(b => ({ id: b.id, name: b.name })),
@@ -198,7 +180,6 @@ export const datastore = {
   },
 
   async syncToSupabase(state: AppState, companyId: string): Promise<void> {
-    console.log(`[DataStore] Syncing all to Supabase for company ${companyId}...`);
     await Promise.all([
       state.banks.length > 0 ? supabase.from('banks').upsert(state.banks.map(b => mapToDb('banks', b, companyId))) : Promise.resolve(),
       state.paymentMethods.length > 0 ? supabase.from('payment_methods').upsert(state.paymentMethods.map(m => mapToDb('payment_methods', m, companyId))) : Promise.resolve(),

@@ -34,8 +34,6 @@ export const accountService = {
     if (!createIfMissing) return null;
 
     // 2. Create if missing
-    console.log(`[AccountService] Account "${name}" not found for company ${companyId}. Creating...`);
-    
     let subId = defaultSubgroupId;
     
     // If no default subgroup provided, try to find a valid one for the group
