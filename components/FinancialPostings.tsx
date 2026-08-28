@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { MainGroup, Account, Bank, PaymentMethod, Entity, FinancialPosting, XmlMapping } from '../types';
 import { XmlImportModal } from './XmlImportModal';
 import { PdvImportModal } from './PdvImportModal';
+import { SearchableSelect } from './SearchableSelect';
 import { supabase } from '../src/lib/supabase';
 import { useActiveCompany } from '../src/contexts/CompanyContext';
 
@@ -382,10 +383,13 @@ export const FinancialPostings: React.FC<Props> = ({
               <div className="flex flex-col gap-4">
                 <div className="flex flex-col gap-2">
                   <label className="text-xs font-bold text-slate-400 ml-1">Conta do Plano</label>
-                  <select value={selectedAccount} onChange={e => setSelectedAccount(e.target.value)} className="form-input-dark" required>
-                    <option value="">Selecione...</option>
-                    {filteredAccounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
-                  </select>
+                  <SearchableSelect
+                    options={filteredAccounts}
+                    value={selectedAccount}
+                    onChange={setSelectedAccount}
+                    placeholder="Busque ou selecione a conta..."
+                    required
+                  />
                 </div>
 
                 <div className="min-h-[128px]">
@@ -427,17 +431,21 @@ export const FinancialPostings: React.FC<Props> = ({
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
               <div className="flex flex-col gap-2">
                 <label className="text-xs font-bold text-slate-400 ml-1">Operação {(activeTab === 'PROVISIONADO' || selectedGroup === MainGroup.ESTOQUE) && '(Opcional)'}</label>
-                <select value={selectedMethod} onChange={e => setSelectedMethod(e.target.value)} className="form-input-dark">
-                  <option value="">Selecione...</option>
-                  {sortedPaymentMethods.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                </select>
+                <SearchableSelect
+                  options={sortedPaymentMethods}
+                  value={selectedMethod}
+                  onChange={setSelectedMethod}
+                  placeholder="Busque a forma de pagamento..."
+                />
               </div>
               <div className="flex flex-col gap-2">
                 <label className="text-xs font-bold text-slate-400 ml-1">Entidade {(activeTab === 'PROVISIONADO' || selectedGroup === MainGroup.ESTOQUE) && '(Opcional)'}</label>
-                <select value={selectedEntity} onChange={e => setSelectedEntity(e.target.value)} className="form-input-dark">
-                  <option value="">Selecione...</option>
-                  {sortedEntities.map(ent => <option key={ent.id} value={ent.id}>{ent.name}</option>)}
-                </select>
+                <SearchableSelect
+                  options={sortedEntities}
+                  value={selectedEntity}
+                  onChange={setSelectedEntity}
+                  placeholder="Busque o favorecido..."
+                />
               </div>
               <div className="flex flex-col gap-2">
                 <label className="text-xs font-bold text-slate-400 ml-1">Valor do Lançamento</label>
@@ -464,10 +472,12 @@ export const FinancialPostings: React.FC<Props> = ({
                 </div>
                 <div className="flex flex-col gap-2">
                   <label className="text-xs font-bold text-slate-400 ml-1">Conta Bancária {selectedGroup === MainGroup.ESTOQUE && '(Opcional)'}</label>
-                  <select value={selectedBank} onChange={e => setSelectedBank(e.target.value)} className="form-input-dark border-rose-500/20">
-                    <option value="">Selecione o banco...</option>
-                    {sortedBanks.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                  </select>
+                  <SearchableSelect
+                    options={sortedBanks}
+                    value={selectedBank}
+                    onChange={setSelectedBank}
+                    placeholder="Busque o banco..."
+                  />
                 </div>
               </div>
             </section>
