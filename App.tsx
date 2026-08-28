@@ -30,6 +30,7 @@ type MenuItem = {
 };
 
 const MENU_ITEMS: MenuItem[] = [
+  { id: 'dashboard', label: 'Painel do Dono', featureCode: 'DASHBOARD' },
   { id: 'dre', label: 'DRE', featureCode: 'DRE' },
   { id: 'lancamentos', label: 'Lançamentos', featureCode: 'LANCAMENTOS' },
   { id: 'lista', label: 'Registros', featureCode: 'LANCAMENTOS' },
@@ -616,7 +617,7 @@ const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void
     <div className="min-h-screen bg-slate-950 text-slate-100 pb-20 selection:bg-rose-500/30">
       <header className="bg-slate-900/80 backdrop-blur-md border-b border-slate-800 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 py-2 flex flex-col gap-2">
-          {/* Linha 1: Logo, Empresa, Trial e Botão Painel do Dono */}
+          {/* Linha 1: Logo, Empresa e Trial */}
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3 overflow-hidden">
               <div className="w-8 h-8 flex-shrink-0 flex items-center justify-center pointer-events-none">
@@ -653,13 +654,6 @@ const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void
               <span className="text-[9px] font-medium text-slate-500 uppercase tracking-widest hidden md:block">
                 Olá, {user.name.split(' ')[0]} {syncing && <span className="inline-block w-1 h-1 bg-rose-500 rounded-full animate-ping ml-1"></span>}
               </span>
-              <button 
-                type="button"
-                onClick={() => setCurrentPage('dashboard')}
-                className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase transition-all border ${currentPage === 'dashboard' ? 'bg-rose-500/10 text-rose-500 border-rose-500/20 shadow-sm' : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700'}`}
-              >
-                Painel do Dono
-              </button>
               <button onClick={onLogout} className="p-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-rose-500 transition-all shadow-sm">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
               </button>
