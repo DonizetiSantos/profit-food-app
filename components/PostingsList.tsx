@@ -17,10 +17,25 @@ export const PostingsList: React.FC<Props> = ({
   initialSearch = '', postings, accounts, banks, paymentMethods, entities, onDeletePosting, onEditPosting
 }) => {
   const [searchTerm, setSearchTerm] = useState(initialSearch);
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'LIQUIDADO' | 'PROVISIONADO'>('ALL');
+  const [groupFilter, setGroupFilter] = useState<'ALL' | MainGroup>('ALL');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
 
   useEffect(() => {
     setSearchTerm(initialSearch);
   }, [initialSearch]);
+
+  const hasActiveFilters =
+    !!searchTerm || statusFilter !== 'ALL' || groupFilter !== 'ALL' || !!dateFrom || !!dateTo;
+
+  const clearFilters = () => {
+    setSearchTerm('');
+    setStatusFilter('ALL');
+    setGroupFilter('ALL');
+    setDateFrom('');
+    setDateTo('');
+  };
 
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return '';
@@ -34,26 +49,34 @@ export const PostingsList: React.FC<Props> = ({
   const getEntityName = (id: string) => entities.find(e => e.id === id)?.name || id || '-';
 
   const filteredPostings = useMemo(() => {
-    if (!searchTerm) return postings;
     const lowerSearch = searchTerm.toLowerCase();
-    
+
     return postings.filter(p => {
+      if (statusFilter !== 'ALL' && p.status !== statusFilter) return false;
+      if (groupFilter !== 'ALL' && p.group !== groupFilter) return false;
+      // occurrenceDate está em formato ISO (AAAA-MM-DD), então comparação de
+      // string já respeita a ordem cronológica.
+      if (dateFrom && p.occurrenceDate < dateFrom) return false;
+      if (dateTo && p.occurrenceDate > dateTo) return false;
+
+      if (!searchTerm) return true;
+
       const accName = getAccountName(p.accountId).toLowerCase();
       const bankName = getBankName(p.bankId).toLowerCase();
       const methodName = getMethodName(p.paymentMethodId).toLowerCase();
       const entName = getEntityName(p.entityId).toLowerCase();
       const obs = (p.observations || '').toLowerCase();
-      
+
       const compDate = formatDate(p.competenceDate).toLowerCase();
       const occurDate = formatDate(p.occurrenceDate).toLowerCase();
       const dueDate = formatDate(p.dueDate).toLowerCase();
       const liqDate = formatDate(p.liquidationDate).toLowerCase();
-      
+
       return (
-        accName.includes(lowerSearch) || 
-        bankName.includes(lowerSearch) || 
-        methodName.includes(lowerSearch) || 
-        entName.includes(lowerSearch) || 
+        accName.includes(lowerSearch) ||
+        bankName.includes(lowerSearch) ||
+        methodName.includes(lowerSearch) ||
+        entName.includes(lowerSearch) ||
         obs.includes(lowerSearch) ||
         compDate.includes(lowerSearch) ||
         occurDate.includes(lowerSearch) ||
@@ -61,32 +84,97 @@ export const PostingsList: React.FC<Props> = ({
         liqDate.includes(lowerSearch)
       );
     });
-  }, [postings, searchTerm, accounts, banks, paymentMethods, entities]);
+  }, [postings, searchTerm, statusFilter, groupFilter, dateFrom, dateTo, accounts, banks, paymentMethods, entities]);
 
   return (
     <div className="animate-fade-in w-full space-y-0">
-      <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 sticky top-[65px] z-40 bg-slate-950/95 backdrop-blur-sm py-6 -mx-4 px-4 border-b border-slate-800/50">
-        <div>
-          <h2 className="text-3xl font-black text-white tracking-tight">Extrato de Movimentações</h2>
-          <p className="text-slate-500 text-sm font-medium">Histórico completo de auditoria financeira.</p>
+      <header className="flex flex-col gap-4 sticky top-[65px] z-40 bg-slate-950/95 backdrop-blur-sm py-6 -mx-4 px-4 border-b border-slate-800/50">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+          <div>
+            <h2 className="text-3xl font-black text-white tracking-tight">Extrato de Movimentações</h2>
+            <p className="text-slate-500 text-sm font-medium">Histórico completo de auditoria financeira.</p>
+          </div>
+
+          <div className="relative w-full md:w-96 group">
+            <span className="absolute inset-y-0 left-0 pl-4 flex items-center text-slate-500 group-focus-within:text-rose-500 transition-colors">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            </span>
+            <input
+              type="text"
+              placeholder="Pesquise por nome, banco, data (dd/mm/aaaa)..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-12 pr-4 py-3 bg-slate-900 border border-slate-800 rounded-2xl focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 outline-none transition-all shadow-xl text-slate-100 placeholder:text-slate-600 font-medium text-xs"
+            />
+          </div>
         </div>
-        
-        <div className="relative w-full md:w-96 group">
-          <span className="absolute inset-y-0 left-0 pl-4 flex items-center text-slate-500 group-focus-within:text-rose-500 transition-colors">
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+
+        <div className="flex flex-wrap items-end gap-4">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Status</label>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as 'ALL' | 'LIQUIDADO' | 'PROVISIONADO')}
+              className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-slate-200 focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 outline-none transition-all"
+            >
+              <option value="ALL">Todos</option>
+              <option value="LIQUIDADO">Liquidado</option>
+              <option value="PROVISIONADO">Provisionado</option>
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Tipo</label>
+            <select
+              value={groupFilter}
+              onChange={(e) => setGroupFilter(e.target.value as 'ALL' | MainGroup)}
+              className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-slate-200 focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 outline-none transition-all"
+            >
+              <option value="ALL">Todos</option>
+              <option value={MainGroup.RECEITAS}>Receitas</option>
+              <option value={MainGroup.DESPESAS}>Despesas</option>
+              <option value={MainGroup.ESTOQUE}>Estoque</option>
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Ocorrência de</label>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-slate-200 focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 outline-none transition-all"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">até</label>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-slate-200 focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 outline-none transition-all"
+            />
+          </div>
+
+          {hasActiveFilters && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="px-4 py-2 text-[10px] font-black bg-slate-800 text-slate-400 rounded-xl hover:text-white transition-all uppercase tracking-widest border border-slate-700"
+            >
+              Limpar filtros
+            </button>
+          )}
+
+          <span className="text-[10px] font-black text-slate-600 uppercase tracking-widest ml-auto self-center">
+            {filteredPostings.length} {filteredPostings.length === 1 ? 'registro' : 'registros'}
           </span>
-          <input 
-            type="text"
-            placeholder="Pesquise por nome, banco, data (dd/mm/aaaa)..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-12 pr-4 py-3 bg-slate-900 border border-slate-800 rounded-2xl focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 outline-none transition-all shadow-xl text-slate-100 placeholder:text-slate-600 font-medium text-xs"
-          />
         </div>
       </header>
 
       <div className="bg-slate-900 rounded-b-[2rem] shadow-2xl border-x border-b border-slate-800 overflow-hidden mt-0">
-        <div className="overflow-auto custom-scrollbar max-h-[350px]">
+        <div className="overflow-auto custom-scrollbar max-h-[calc(100vh-320px)] min-h-[350px]">
           <table className="w-full text-left border-collapse min-w-[1400px]">
             <thead className="sticky top-0 z-30">
               <tr className="bg-slate-950 text-slate-500 text-[9px] uppercase tracking-[0.2em] font-black shadow-md">
@@ -111,7 +199,9 @@ export const PostingsList: React.FC<Props> = ({
               {filteredPostings.length === 0 ? (
                 <tr>
                   <td colSpan={15} className="text-center py-24 text-slate-600 font-bold italic bg-slate-900/50">
-                    Nenhum registro encontrado para "{searchTerm}".
+                    {hasActiveFilters
+                      ? 'Nenhum registro encontrado para os filtros aplicados.'
+                      : 'Nenhum registro lançado ainda.'}
                   </td>
                 </tr>
               ) : (
