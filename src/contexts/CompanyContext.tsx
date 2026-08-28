@@ -74,7 +74,6 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode; user: User |
 
   const fetchActiveCompany = async () => {
     if (!user) {
-      console.log('[CompanyContext] No user provided to CompanyProvider');
       resetContext();
       setLoading(false);
       return;
@@ -83,11 +82,9 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode; user: User |
     try {
       setLoading(true);
       setError(null);
-      console.log('[CompanyContext] Fetching active company for user:', user.id);
 
       const adminStatus = await fetchSystemAdminStatus(user.id);
       setIsSystemAdmin(adminStatus);
-      console.log('[CompanyContext] System admin status:', adminStatus);
 
       // 1. Get company link from company_users (LIMIT 1)
       const { data: links, error: linkError } = await supabase
@@ -113,7 +110,6 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode; user: User |
       }
 
       const companyId = links[0].company_id;
-      console.log('[CompanyContext] Found company_id:', companyId);
 
       // 2. Get company details from companies, including plan_id
       const { data: companyData, error: companyError } = await supabase
@@ -138,7 +134,6 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode; user: User |
       }
 
       setActiveCompany(companyData as Company);
-      console.log('[CompanyContext] Active company loaded:', companyData.name);
 
       const companyPlanId = (companyData as any).plan_id;
 
@@ -169,12 +164,10 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode; user: User |
       }
 
       setPlan(planData as PlanInfo);
-      console.log('[CompanyContext] Plan loaded:', planData.code);
 
       // 4. Get allowed features for the plan
       const allowedFeatures = await fetchPlanFeatures(planData.id);
       setFeatures(allowedFeatures);
-      console.log('[CompanyContext] Features loaded:', allowedFeatures);
     } catch (err: any) {
       console.error('[CompanyContext] Critical error fetching company:', err);
       resetContext();

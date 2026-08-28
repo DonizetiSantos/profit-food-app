@@ -50,7 +50,6 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
     try {
       const data = await ofxImportService.getTransactions(selectedBankId, activeCompany.id, fromDate, toDate);
       setTransactions(data);
-      console.log(`Transactions loaded: ${data.length}`);
     } catch (err) {
       console.error("Erro ao carregar transações:", err);
       alert("Erro ao carregar transações do banco.");
@@ -86,8 +85,6 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
       const result = await ofxImportService.importOfxFile(selectedBankId, file, activeCompany.id);
       
       if (result.status === 'SUCCESS') {
-        console.log("OFX import ok, refreshing transactions...");
-        
         // Update date filters based on imported file if available
         if (result.ofxData?.fromDate) setFromDate(result.ofxData.fromDate);
         if (result.ofxData?.toDate) setToDate(result.ofxData.toDate);
@@ -130,7 +127,6 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
 
   const handleReconcileClick = async (transaction: any) => {
     if (!activeCompany) return;
-    console.log("Conciliar clicked", transaction.id);
     setSelectedTransaction(transaction);
     setLoadingCandidates(true);
     setSelectedPostingId('');
@@ -224,7 +220,6 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
 
   const performReconciliation = async (bankTx: any, posting: any, type: 'MANUAL' | 'AUTO' = 'MANUAL') => {
     if (!activeCompany) return;
-    console.log(`[Reconciliation] Starting (${type})`, { bankTxId: bankTx.id, postingId: posting.id, amount: bankTx.amount });
     setReconciling(true);
 
     try {
@@ -382,7 +377,6 @@ export const Reconciliation: React.FC<Props> = ({ banks, onRefresh, user }) => {
         await ofxImportService.savePayeeMapping(bankTx.bank_id, bankTx.description, posting.favored.id, activeCompany.id);
       }
 
-      console.log("[Reconciliation] Success!");
       if (type === 'MANUAL') alert("Conciliação realizada com sucesso!");
       
       setSelectedTransaction(null);

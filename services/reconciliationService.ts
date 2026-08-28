@@ -130,7 +130,6 @@ export const reconciliationService = {
       return diffA - diffB;
     });
 
-    console.log("Found candidates", candidates.length);
     return candidates;
   },
 
@@ -170,8 +169,6 @@ export const reconciliationService = {
       
       if (postError) throw postError;
     }
-
-    console.log("Reconciliation saved");
   },
 
   /**

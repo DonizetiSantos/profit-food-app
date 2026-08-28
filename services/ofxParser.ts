@@ -61,8 +61,6 @@ const parseSgmlOfx = (text: string): ParsedOfx => {
     blocks = text.match(/<STMTTRN>([\s\S]*?)(?=<STMTTRN>|<\/BANKTRANLIST>|<\/STMTRS>|<\/OFX>|$)/gi) ?? [];
   }
 
-  console.log("OFX: blocks.length =", blocks.length);
-
   for (let i = 0; i < blocks.length; i++) {
     const block = blocks[i];
     
@@ -96,28 +94,12 @@ const parseSgmlOfx = (text: string): ParsedOfx => {
     });
   }
 
-  if (blocks.length > 0 && transactions.length === 0) {
-    const firstBlock = blocks[0];
-    console.log("OFX: first block sample (120 chars)", firstBlock.substring(0, 120).replace(/\n/g, ' '));
-    
-    const getTagValue = (tagName: string) => {
-      const regex = new RegExp(`<${tagName}>([^<\\r\\n]+)`, 'i');
-      const match = firstBlock.match(regex);
-      return match ? match[1].trim() : '';
-    };
-    const dt = getTagValue('DTPOSTED');
-    const amt = getTagValue('TRNAMT');
-    console.log(`OFX: discard reason - DTPOSTED: "${dt}" (parsed: "${parseDate(dt)}"), TRNAMT: "${amt}" (parsed: ${parseAmount(amt)})`);
-  }
-
   // Extract from/to dates
   const getGlobalTagValue = (tagName: string) => {
     const regex = new RegExp(`<${tagName}>([^<\\r\\n]+)`, 'i');
     const match = text.match(regex);
     return match ? match[1].trim() : '';
   };
-
-  console.log("OFX: parsed", transactions.length);
 
   return {
     fromDate: parseDate(getGlobalTagValue('DTSTART')),
