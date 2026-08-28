@@ -20,6 +20,38 @@ import { Company } from './types';
 
 const WHATSAPP_LINK = "https://wa.me/5511999999999"; // Configurar link aqui
 
+
+type AppPage = 'dashboard' | 'lancamentos' | 'lista' | 'contas' | 'cadastros' | 'dre' | 'analise' | 'conciliacao' | 'configuracoes';
+
+type MenuItem = {
+  id: AppPage;
+  label: string;
+  featureCode?: string;
+};
+
+const MENU_ITEMS: MenuItem[] = [
+  { id: 'dre', label: 'DRE', featureCode: 'DRE' },
+  { id: 'lancamentos', label: 'Lançamentos', featureCode: 'LANCAMENTOS' },
+  { id: 'lista', label: 'Registros', featureCode: 'LANCAMENTOS' },
+  { id: 'conciliacao', label: 'Conciliação', featureCode: 'CONCILIACAO' },
+  { id: 'contas', label: 'Plano de Contas', featureCode: 'LANCAMENTOS' },
+  { id: 'cadastros', label: 'Cadastros', featureCode: 'LANCAMENTOS' },
+  { id: 'configuracoes', label: 'Configurações', featureCode: 'CONFIGURACOES' },
+];
+
+const PAGE_FEATURES: Partial<Record<AppPage, string>> = {
+  dashboard: 'DASHBOARD',
+  dre: 'DRE',
+  analise: 'IA_FINANCEIRA',
+  lancamentos: 'LANCAMENTOS',
+  lista: 'LANCAMENTOS',
+  conciliacao: 'CONCILIACAO',
+  contas: 'LANCAMENTOS',
+  cadastros: 'LANCAMENTOS',
+  configuracoes: 'CONFIGURACOES',
+};
+
+
 const CORE_PAYMENT_METHODS = [
   'DINHEIRO',
   'PIX',
@@ -67,8 +99,8 @@ const canAccessCompany = (company: Company | null): boolean => {
 };
 
 const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void }> = ({ user, onLogout }) => {
-  const { activeCompany, loading: companyLoading, error: companyError } = useActiveCompany();
-  const [currentPage, setCurrentPage] = useState<'dashboard' | 'lancamentos' | 'lista' | 'contas' | 'cadastros' | 'dre' | 'analise' | 'conciliacao' | 'configuracoes'>('dashboard');
+  const { activeCompany, plan, hasFeature, loading: companyLoading, error: companyError } = useActiveCompany();
+  const [currentPage, setCurrentPage] = useState<AppPage>('dashboard');
   const [analysisData, setAnalysisData] = useState<{ data: FinancialAnalysisData, period: string } | null>(null);
   const [editingPosting, setEditingPosting] = useState<FinancialPosting | null>(null);
   const [globalSearchFilter, setGlobalSearchFilter] = useState('');
@@ -326,6 +358,11 @@ const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void
   }, [activeCompany]);
 
   const handleShowAnalysis = (data: FinancialAnalysisData, period: string) => {
+    if (!hasFeature('IA_FINANCEIRA')) {
+      alert('A análise financeira com IA está disponível apenas em planos com este módulo liberado.');
+      return;
+    }
+
     setAnalysisData({ data, period });
     setCurrentPage('analise');
   };
@@ -543,6 +580,38 @@ const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void
 
   const trialInfo = activeCompany ? getTrialBadge(activeCompany) : null;
 
+  const isPageAllowed = (page: AppPage): boolean => {
+    const featureCode = PAGE_FEATURES[page];
+    return !featureCode || hasFeature(featureCode);
+  };
+
+  const allowedMenuItems = MENU_ITEMS.filter((item) => !item.featureCode || hasFeature(item.featureCode));
+
+  const navigateToPage = (page: AppPage) => {
+    if (!isPageAllowed(page)) return;
+    if (page === 'lista') setGlobalSearchFilter('');
+    setCurrentPage(page);
+  };
+
+  const AccessDenied = () => (
+    <div className="bg-slate-900/70 border border-amber-500/20 rounded-3xl p-8 text-center max-w-2xl mx-auto">
+      <div className="w-16 h-16 bg-amber-500/10 rounded-2xl flex items-center justify-center border border-amber-500/20 mx-auto mb-5">
+        <svg className="text-amber-500" xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      </div>
+      <h2 className="text-2xl font-black text-white uppercase tracking-tight mb-2">Módulo não disponível no seu plano</h2>
+      <p className="text-slate-400 font-medium mb-6">
+        Esta funcionalidade não está liberada para o plano atual da empresa.
+      </p>
+      <button
+        type="button"
+        onClick={() => setCurrentPage('dashboard')}
+        className="bg-rose-600 hover:bg-rose-500 text-white px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs transition-all"
+      >
+        Voltar ao painel
+      </button>
+    </div>
+  );
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 pb-20 selection:bg-rose-500/30">
       <header className="bg-slate-900/80 backdrop-blur-md border-b border-slate-800 sticky top-0 z-50">
@@ -560,6 +629,11 @@ const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void
                 <span className="text-[10px] font-black text-rose-500 uppercase tracking-widest bg-rose-500/10 px-2 py-0.5 rounded-lg border border-rose-500/20 whitespace-nowrap">
                   {activeCompany.name}
                 </span>
+                {plan && (
+                  <span className="text-[9px] font-black text-sky-400 uppercase tracking-widest bg-sky-500/10 px-2 py-0.5 rounded-lg border border-sky-500/20 whitespace-nowrap">
+                    {plan.name}
+                  </span>
+                )}
                 {trialInfo && (
                   <div className={`flex flex-col items-start px-2 py-1 rounded border whitespace-nowrap leading-none ${trialInfo.isUrgent ? 'bg-amber-500/10 border-amber-500/20 text-amber-500' : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500'}`}>
                     <span className="text-[9px] font-black uppercase tracking-widest">
@@ -595,15 +669,14 @@ const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void
           {/* Linha 2: Menu de Navegação */}
           <div className="w-full">
             <nav className="flex bg-slate-950/50 p-1 rounded-xl border border-slate-800 overflow-x-auto no-scrollbar">
-              {['dre', 'lancamentos', 'lista', 'conciliacao', 'contas', 'cadastros', 'configuracoes'].map(id => (
-                <button 
-                  key={id} type="button" onClick={() => {
-                    if (id === 'lista') setGlobalSearchFilter('');
-                    setCurrentPage(id as any);
-                  }} 
-                  className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase whitespace-nowrap transition-all ${currentPage === id ? 'bg-slate-800 text-rose-500 shadow-md' : 'text-slate-400 hover:text-slate-200'}`}
+              {allowedMenuItems.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => navigateToPage(item.id)}
+                  className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase whitespace-nowrap transition-all ${currentPage === item.id ? 'bg-slate-800 text-rose-500 shadow-md' : 'text-slate-400 hover:text-slate-200'}`}
                 >
-                  {id === 'contas' ? 'Plano' : id === 'lista' ? 'Registros' : id === 'conciliacao' ? 'Conciliação' : id === 'configuracoes' ? 'Configurações' : id === 'lancamentos' ? 'Lançamentos' : id}
+                  {item.label}
                 </button>
               ))}
             </nav>
@@ -612,10 +685,11 @@ const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-8">
-        {currentPage === 'dashboard' && <Dashboard postings={postings} accounts={accounts} banks={banks} onLiquidar={handleEditPosting} />}
-        {currentPage === 'dre' && <DRE postings={postings} accounts={accounts} subgroups={subgroups} onShowAnalysis={handleShowAnalysis} />}
-        {currentPage === 'analise' && analysisData && <FinancialAnalysis data={analysisData.data} period={analysisData.period} onBack={() => setCurrentPage('dre')} />}
-        {currentPage === 'lancamentos' && (
+        {!isPageAllowed(currentPage) && <AccessDenied />}
+        {isPageAllowed(currentPage) && currentPage === 'dashboard' && <Dashboard postings={postings} accounts={accounts} banks={banks} onLiquidar={handleEditPosting} />}
+        {isPageAllowed(currentPage) && currentPage === 'dre' && <DRE postings={postings} accounts={accounts} subgroups={subgroups} onShowAnalysis={handleShowAnalysis} />}
+        {isPageAllowed(currentPage) && currentPage === 'analise' && analysisData && <FinancialAnalysis data={analysisData.data} period={analysisData.period} onBack={() => setCurrentPage('dre')} />}
+        {isPageAllowed(currentPage) && currentPage === 'lancamentos' && (
           <FinancialPostings 
             accounts={accounts} 
             banks={banks} 
@@ -631,11 +705,11 @@ const AppContent: React.FC<{ user: User; onLogout: (e: React.MouseEvent) => void
             onRefresh={initData}
           />
         )}
-        {currentPage === 'lista' && <PostingsList initialSearch={globalSearchFilter} postings={postings} accounts={accounts} banks={banks} paymentMethods={paymentMethods} entities={favored} onDeletePosting={handleDeletePosting} onEditPosting={handleEditPosting} />}
-        {currentPage === 'conciliacao' && <Reconciliation banks={banks} onRefresh={initData} />}
-        {currentPage === 'contas' && <AccountRegistration subgroups={subgroups} accounts={accounts} onAddAccount={handleAddAccount} onDeleteAccount={handleDeleteAccount} />}
-        {currentPage === 'cadastros' && <GeneralRegistry banks={banks} paymentMethods={paymentMethods} favored={favored} onAddBank={handleAddBank} onDeleteBank={handleDeleteBank} onAddMethod={handleAddMethod} onDeleteMethod={handleDeleteMethod} onAddFavored={handleAddFavored} onDeleteFavored={handleDeleteFavored} onExport={handleExportData} onImport={handleImportData} onReload={handleReloadData} onReset={handleResetData} />}
-        {currentPage === 'configuracoes' && <FinancialAssumptions banks={banks} />}
+        {isPageAllowed(currentPage) && currentPage === 'lista' && <PostingsList initialSearch={globalSearchFilter} postings={postings} accounts={accounts} banks={banks} paymentMethods={paymentMethods} entities={favored} onDeletePosting={handleDeletePosting} onEditPosting={handleEditPosting} />}
+        {isPageAllowed(currentPage) && currentPage === 'conciliacao' && <Reconciliation banks={banks} onRefresh={initData} />}
+        {isPageAllowed(currentPage) && currentPage === 'contas' && <AccountRegistration subgroups={subgroups} accounts={accounts} onAddAccount={handleAddAccount} onDeleteAccount={handleDeleteAccount} />}
+        {isPageAllowed(currentPage) && currentPage === 'cadastros' && <GeneralRegistry banks={banks} paymentMethods={paymentMethods} favored={favored} onAddBank={handleAddBank} onDeleteBank={handleDeleteBank} onAddMethod={handleAddMethod} onDeleteMethod={handleDeleteMethod} onAddFavored={handleAddFavored} onDeleteFavored={handleDeleteFavored} onExport={handleExportData} onImport={handleImportData} onReload={handleReloadData} onReset={handleResetData} />}
+        {isPageAllowed(currentPage) && currentPage === 'configuracoes' && <FinancialAssumptions banks={banks} />}
       </main>
       <footer className="fixed bottom-0 left-0 right-0 bg-slate-900/90 backdrop-blur-md border-t border-slate-800 py-3 text-center flex flex-col items-center justify-center gap-1">
         <p className="text-slate-500 text-[10px] tracking-widest font-bold uppercase">&copy; 2026 PROFIT FOOD</p>
