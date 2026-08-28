@@ -411,13 +411,12 @@ export const pdvImportService = {
     for (const row of batch.rows) {
       const postingId = crypto.randomUUID();
 
+      // Dinheiro sempre vai para o caixa da empresa. Qualquer outra forma de
+      // pagamento usa o banco configurado na regra de liquidação (o banco de
+      // onde o extrato é baixado); se não houver regra, fica sem banco.
       let bankId = row.defaultBankId;
       if (row.paymentMethodType === 'DINHEIRO') {
         bankId = caixaEmpresaId || row.defaultBankId || null;
-      } else if (!bankId && row.mappedStatus === 'LIQUIDADO') {
-        if (row.paymentMethodType === 'DINHEIRO') {
-          bankId = caixaEmpresaId;
-        }
       }
 
       const finalStatus: 'LIQUIDADO' | 'PROVISIONADO' =
