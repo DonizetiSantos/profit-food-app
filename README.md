@@ -13,7 +13,7 @@ Este projeto agora utiliza **Supabase** para persistência de dados em nuvem, co
     -   Cole o conteúdo do arquivo `supabase/schema.sql` e execute.
 
 2.  **Variáveis de Ambiente**:
-    -   As credenciais já estão configuradas no projeto em `src/lib/supabaseClient.ts`.
+    -   As credenciais já estão configuradas no projeto em `src/lib/supabase.ts`.
     -   Para produção ou novos projetos, defina as seguintes variáveis no seu ambiente (ou arquivo `.env`):
         -   `VITE_SUPABASE_URL`: URL do seu projeto Supabase.
         -   `VITE_SUPABASE_ANON_KEY`: Chave anônima (anon key) do seu projeto.
@@ -29,7 +29,7 @@ Este projeto agora utiliza **Supabase** para persistência de dados em nuvem, co
 A estrutura para conciliação bancária já está preparada no banco de dados e no código:
 -   **Tabelas**: `bank_transactions`, `reconciliations` e `ofx_imports`.
 -   **Menu**: Uma nova aba **Conciliação** foi adicionada para gerenciar os extratos.
--   **Services**: O arquivo `src/services/reconciliationService.ts` contém os métodos necessários para listar e vincular transações.
+-   **Services**: O arquivo `services/reconciliationService.ts` contém os métodos necessários para listar e vincular transações.
 
 ### Como Testar a Persistência
 1.  Crie um novo lançamento na aba **Lançamentos**.
